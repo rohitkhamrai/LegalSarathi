@@ -40,12 +40,35 @@ export function BuddyInput({ lang, onTextSubmit, onVoiceResult, loading }: Buddy
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      // Request mono 16kHz — Whisper's optimal input format
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,        // mono
+          sampleRate: 16000,      // 16kHz — Whisper native
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
+
+      // Cross-browser MIME type fallback: Chrome=webm, Firefox=ogg, Safari=mp4
+      const mimeType = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/mp4',
+      ].find(t => MediaRecorder.isTypeSupported(t)) ?? '';
+
+      const recorder = new MediaRecorder(stream, {
+        mimeType: mimeType || undefined,
+        audioBitsPerSecond: 128000,  // 128kbps — clear speech quality
+      });
+
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' });
         stream.getTracks().forEach(t => t.stop());
         setRecState('processing');
         onVoiceResult(blob);
@@ -53,10 +76,12 @@ export function BuddyInput({ lang, onTextSubmit, onVoiceResult, loading }: Buddy
       recorder.start();
       mediaRef.current = recorder;
       setRecState('recording');
-    } catch {
-      alert('Microphone access denied.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      alert(`Microphone error: ${msg}`);
     }
   };
+
 
   const stopRecording = () => { mediaRef.current?.stop(); };
 
