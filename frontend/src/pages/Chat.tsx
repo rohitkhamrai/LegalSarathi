@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useLocation } from "react-router-dom";
-import { Mic, Paperclip, Send, X } from "lucide-react";
+import { Mic, Paperclip, Send, X, Volume2, Square } from "lucide-react";
 import { ScreenShell } from "@/components/layout/ScreenShell";
 import { StickyHeader } from "@/components/layout/StickyHeader";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -20,6 +20,18 @@ interface Msg {
   topic?: ChatTopic;
   lawChip?: string;
   followups?: string[];
+  ocrExtractedText?: string;
+  // Structured legal fields from API
+  severityLevel?: "INFO" | "CAUTION" | "DANGER";
+  rights?: string[];
+  actionSteps?: string[];
+  doNotDo?: string[];
+  evidenceRequired?: string[];
+  situationSummary?: string;
+  jurisdictionNote?: string;
+  awareness?: string;
+  ragChunksUsed?: string[];
+  citationBadge?: string;
 }
 
 const Chat = () => {
@@ -37,6 +49,246 @@ const Chat = () => {
   const [urgent, setUrgent] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const seededRef = useRef(false);
+  const recognitionRef = useRef<any>(null);
+
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+
+  // BCP-47 locale map for Web Speech API
+  const LANG_TO_BCP47: Record<string, string> = {
+    hi: "hi-IN", ta: "ta-IN", te: "te-IN", mr: "mr-IN",
+    bn: "bn-IN", en: "en-IN", gu: "gu-IN", kn: "kn-IN",
+    ml: "ml-IN", pa: "pa-IN", ur: "ur-PK", or: "or-IN", as: "as-IN",
+  };
+
+  const stopRecognition = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const sendVoiceTranscript = (text: string) => {
+    stopRecognition();
+    setVoice(false);
+    setVoiceTranscript("");
+    if (text.trim()) send(text.trim());
+  };
+
+  const startVoiceRecognition = () => {
+    setVoiceTranscript("");
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      // Fallback: Groq Whisper via MediaRecorder
+      startGroqFallback();
+      return;
+    }
+
+    // Accumulates only isFinal segments — plain object, not React state
+    // so it never stales inside the closure across events
+    const finalAccum = { text: "" };
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = LANG_TO_BCP47[lang.split("-")[0]] || "hi-IN";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsRecording(true);
+
+    recognition.onresult = (e: any) => {
+      let interimChunk = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const segment = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          // Confirmed word(s): append once to the permanent accumulator
+          finalAccum.text += segment + " ";
+        } else {
+          // Interim: only the LATEST partial from this event
+          interimChunk = segment;
+        }
+      }
+      // State = confirmed finals + current interim (interim replaces itself each fire)
+      setVoiceTranscript(finalAccum.text + interimChunk);
+    };
+
+    recognition.onerror = (e: any) => {
+      console.error("Speech recognition error:", e.error);
+      if (e.error === "not-allowed") {
+        alert("Microphone access denied. Please allow microphone access.");
+      }
+      stopRecognition();
+    };
+
+    recognition.onend = () => {
+      // Lock in whatever was confirmed when mic stops
+      setVoiceTranscript(finalAccum.text.trim());
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const startGroqFallback = async () => {
+    // Groq Whisper fallback for Safari/Firefox
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, sampleRate: 16000 },
+      });
+      const mimeType =
+        ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) =>
+          MediaRecorder.isTypeSupported(t)
+        ) || "";
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        audioBitsPerSecond: 128000,
+      });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
+        stream.getTracks().forEach((t) => t.stop());
+        const fd = new FormData();
+        fd.append("audio", blob, "audio.webm");
+        fd.append("lang", lang);
+        setTyping(true);
+        try {
+          const res = await fetch("/api/voice-query", {
+            method: "POST",
+            body: fd,
+          });
+          if (!res.ok) throw new Error("Voice query failed");
+          const dataText = res.headers.get("X-Query-Result");
+          const newMsgId = crypto.randomUUID();
+          if (dataText) {
+            const data = JSON.parse(dataText);
+            setMsgs((m) => [
+              ...m,
+              {
+                id: newMsgId,
+                role: "ai",
+                text: data.buddy_text || data.translated || "Audio received.",
+                topic: "legal",
+                lawChip: data.law_chip || undefined,
+                followups: data.followups || [],
+              },
+            ]);
+          }
+        } catch (e) {
+          console.error("Groq fallback error", e);
+        } finally {
+          setTyping(false);
+          setVoice(false);
+          setVoiceTranscript("");
+        }
+      };
+      setIsRecording(true);
+      recorder.start();
+      (window as any).__legalsarthiRecorder = { recorder, stream };
+    } catch (err) {
+      console.error(err);
+      setVoice(false);
+    }
+  };
+
+  const stopGroqFallback = () => {
+    const r = (window as any).__legalsarthiRecorder;
+    if (r) {
+      r.recorder.stop();
+      r.stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+      delete (window as any).__legalsarthiRecorder;
+    }
+    setIsRecording(false);
+  };
+
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const toggleAudio = (m: Msg) => {
+    // Stop anything currently playing
+    if (playingId === m.id) {
+      window.speechSynthesis?.cancel();
+      audioRef.current?.pause();
+      setPlayingId(null);
+      return;
+    }
+    window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    setPlayingId(null);
+
+    // Primary: browser SpeechSynthesis — instant, no network, uses OS Neural voices
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(m.text);
+      const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
+      utterance.lang = bcp47;
+      utterance.rate = 1.05;   // slightly faster than default — more natural
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      // Female-only voice selection — filter out any known male voices
+      const voices = window.speechSynthesis.getVoices();
+      const MALE_KEYWORDS = ["male", "man", "guy", "hemant", "kailash", "madhur", "ravi", "prabhat", "aditi-m"];
+      const isFemale = (v: SpeechSynthesisVoice) =>
+        !MALE_KEYWORDS.some((kw) => v.name.toLowerCase().includes(kw));
+
+      const preferred =
+        // 1st choice: exact locale + neural/google + female
+        voices.find((v) =>
+          v.lang === bcp47 && isFemale(v) &&
+          (v.name.toLowerCase().includes("neural") || v.name.toLowerCase().includes("google"))
+        ) ||
+        // 2nd choice: exact locale + female (any)
+        voices.find((v) => v.lang === bcp47 && isFemale(v)) ||
+        // 3rd choice: same language prefix + female
+        voices.find((v) => v.lang.startsWith(bcp47.split("-")[0]) && isFemale(v));
+
+      if (preferred) utterance.voice = preferred;
+
+      utterance.onstart = () => setPlayingId(m.id);
+      utterance.onend = () => setPlayingId(null);
+      utterance.onerror = async () => {
+        // Fallback to backend edge-tts if browser voice fails
+        setPlayingId(null);
+        await playFromBackend(m);
+      };
+      window.speechSynthesis.speak(utterance);
+      setPlayingId(m.id);
+      return;
+    }
+
+    // Fallback: backend edge-tts (Microsoft Neural)
+    playFromBackend(m);
+  };
+
+  const playFromBackend = async (m: Msg) => {
+    setLoadingAudioId(m.id);
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: m.text, lang: lang }),
+      });
+      if (!res.ok) throw new Error("TTS failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (!audioRef.current) audioRef.current = new Audio();
+      audioRef.current.src = url;
+      audioRef.current.onended = () => setPlayingId(null);
+      setLoadingAudioId(null);
+      setPlayingId(m.id);
+      try { await audioRef.current.play(); } catch { setPlayingId(null); }
+    } catch (e) {
+      console.error(e);
+      setLoadingAudioId(null);
+      setPlayingId(null);
+    }
+  };
 
   const replyTo = async (userText: string) => {
     setTyping(true);
@@ -46,29 +298,33 @@ const Chat = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: userText, language: lang })
       });
-      
       if (!res.ok) throw new Error("API failed");
       const data = await res.json();
-      
       setMsgs((m) => [
         ...m,
         {
           id: crypto.randomUUID(),
           role: "ai",
           text: data.buddy_text || data.translated || "Sorry, I couldn't understand.",
-          topic: "legal", // Fallback generic topic
-          lawChip: data.law_chip || undefined,
+          topic: "legal",
+          lawChip: data.legal_keys?.[0] || undefined,
           followups: data.followups || [],
+          severityLevel: data.severity_level,
+          situationSummary: data.situation_summary,
+          rights: data.rights || [],
+          actionSteps: data.action_steps || [],
+          doNotDo: data.do_not_do || [],
+          evidenceRequired: data.evidence_required || [],
+          jurisdictionNote: data.jurisdiction_note,
+          awareness: data.awareness,
+          ragChunksUsed: data.rag_chunks_used || [],
+          citationBadge: data.citation_badge,
         },
       ]);
     } catch (err) {
       setMsgs((m) => [
         ...m,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: "I'm having trouble connecting right now. Please try again later.",
-        },
+        { id: crypto.randomUUID(), role: "ai", text: "I'm having trouble connecting right now. Please try again later." },
       ]);
     } finally {
       setTyping(false);
@@ -149,6 +405,7 @@ const Chat = () => {
           topic: "legal",
           lawChip: data.law_chip || undefined,
           followups: data.followups || [],
+          ocrExtractedText: data.ocr_extracted_text,
         },
       ]);
     } catch (err) {
@@ -186,42 +443,160 @@ const Chat = () => {
         {msgs.map((m) => (
           <div key={m.id} className={cn("max-w-[85%] animate-scale-in", m.role === "user" ? "ml-auto" : "")}>
             {m.role === "ai" ? (
-              <div className="ls-card border-l-4 border-l-primary p-3.5 text-sm">
-                <p className="whitespace-pre-line">{m.text}</p>
-                {m.lawChip && (
-                  <div className="mt-3 flex flex-wrap gap-2 items-center">
-                    <span className="ls-chip bg-primary/5 text-primary border-primary/20">{m.lawChip}</span>
-                    <button className="text-xs text-accent font-semibold underline-offset-2 hover:underline">{t("viewFullLaw")}</button>
+              <div className="ls-card border-l-4 border-l-primary p-4 text-sm space-y-3">
+
+                {/* Severity badge */}
+                {m.severityLevel && (
+                  <div className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                    m.severityLevel === "DANGER" && "bg-destructive/15 text-destructive",
+                    m.severityLevel === "CAUTION" && "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
+                    m.severityLevel === "INFO" && "bg-primary/10 text-primary",
+                  )}>
+                    <span className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      m.severityLevel === "DANGER" && "bg-destructive animate-pulse",
+                      m.severityLevel === "CAUTION" && "bg-yellow-500",
+                      m.severityLevel === "INFO" && "bg-primary",
+                    )} />
+                    {m.severityLevel}
                   </div>
                 )}
-                {m.followups && m.followups.length > 0 && (
-                  <div className="mt-3">
-                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">{t("followUps")}</p>
-                    <div className="flex flex-col gap-1.5">
-                      {m.followups.map((f) => (
-                        <button
-                          key={f}
-                          onClick={() => send(f)}
-                          className="text-left text-xs px-3 py-2 rounded-xl bg-primary/5 hover:bg-primary/10 text-primary border border-primary/15 tap"
-                        >
-                          {f}
-                        </button>
+
+                {/* Situation summary */}
+                {m.situationSummary && (
+                  <p className="text-sm font-medium text-foreground leading-relaxed">{m.situationSummary}</p>
+                )}
+
+                {/* Rights with citations */}
+                {m.rights && m.rights.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1.5">⚖️ Your Rights</p>
+                    <ul className="space-y-1">
+                      {m.rights.map((r, i) => (
+                        <li key={i} className="flex gap-2 text-xs">
+                          <span className="text-primary font-bold mt-0.5 shrink-0">§</span>
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Action steps */}
+                {m.actionSteps && m.actionSteps.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-widest mb-1.5">📋 Steps to Take</p>
+                    <ol className="space-y-1 list-none">
+                      {m.actionSteps.map((s, i) => (
+                        <li key={i} className="flex gap-2 text-xs">
+                          <span className="bg-green-600/15 text-green-700 dark:text-green-400 font-bold rounded px-1.5 py-0.5 shrink-0 text-[10px]">{i + 1}</span>
+                          <span>{s}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {/* Do not do */}
+                {m.doNotDo && m.doNotDo.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-destructive uppercase tracking-widest mb-1.5">🚫 Do NOT Do</p>
+                    <ul className="space-y-1">
+                      {m.doNotDo.map((d, i) => (
+                        <li key={i} className="flex gap-2 text-xs text-destructive/80">
+                          <span className="shrink-0 font-bold">×</span>
+                          <span>{d}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Evidence required */}
+                {m.evidenceRequired && m.evidenceRequired.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-yellow-600 dark:text-yellow-400 uppercase tracking-widest mb-1.5">📂 Collect Now</p>
+                    <ul className="space-y-1">
+                      {m.evidenceRequired.map((e, i) => (
+                        <li key={i} className="flex gap-2 text-xs">
+                          <span className="shrink-0">📌</span>
+                          <span>{e}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* OCR extracted text (collapsible) */}
+                {m.ocrExtractedText && (
+                  <details className="group">
+                    <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest cursor-pointer list-none flex items-center gap-1 hover:text-primary transition-colors">
+                      <span className="group-open:rotate-180 transition-transform duration-200">▼</span>
+                      View Extracted Text
+                    </summary>
+                    <div className="mt-2 p-2 bg-muted/30 rounded-lg text-[11px] font-mono whitespace-pre-wrap border border-border/50 max-h-40 overflow-y-auto">
+                      {m.ocrExtractedText}
+                    </div>
+                  </details>
+                )}
+
+                {/* Awareness paragraph (collapsible) */}
+                {m.awareness && (
+                  <details className="group">
+                    <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest cursor-pointer list-none flex items-center gap-1 hover:text-primary transition-colors">
+                      <span className="group-open:rotate-180 transition-transform duration-200">▼</span>
+                      💡 Know Your Law
+                    </summary>
+                    <p className="mt-2 text-xs text-muted-foreground leading-relaxed">{m.awareness}</p>
+                  </details>
+                )}
+
+                {/* Citation badge + RAG sources (collapsible) */}
+                {m.ragChunksUsed && m.ragChunksUsed.length > 0 && (
+                  <details className="group">
+                    <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest cursor-pointer list-none flex items-center gap-1 hover:text-primary transition-colors">
+                      <span className="group-open:rotate-180 transition-transform duration-200">▼</span>
+                      {m.citationBadge || "📚"} Sources ({m.ragChunksUsed.length})
+                    </summary>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.ragChunksUsed.map((ref) => (
+                        <span key={ref} className="ls-chip text-[10px] font-mono bg-primary/5 text-primary border-primary/20">{ref}</span>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 )}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {m.lawChip && m.topic && m.topic !== "generic" && (
-                    <Button variant="primary" className="h-9 text-xs px-3">{t("generateDocFor")}</Button>
-                  )}
+
+                {/* Jurisdiction note */}
+                {m.jurisdictionNote && (
+                  <p className="text-[10px] italic text-muted-foreground border-t border-border pt-2">{m.jurisdictionNote}</p>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex flex-wrap gap-2 pt-1 border-t border-border">
+                  <button
+                    onClick={() => toggleAudio(m)}
+                    className="w-9 h-9 flex items-center justify-center rounded-button border border-border text-foreground tap shrink-0"
+                    title={playingId === m.id ? "Stop audio" : "Play audio"}
+                    disabled={loadingAudioId === m.id}
+                  >
+                    {loadingAudioId === m.id ? (
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
+                    ) : playingId === m.id ? (
+                      <Square size={14} className="text-primary" />
+                    ) : (
+                      <Volume2 size={14} />
+                    )}
+                  </button>
                   <button
                     onClick={() => navigate("/lawyers")}
                     className="h-9 text-xs px-3 rounded-button border border-border text-foreground tap"
                   >
-                    {t("consultLawyer")}
+                    Consult Lawyer
                   </button>
                 </div>
-                <p className="mt-3 pt-2 border-t border-border text-[10px] leading-relaxed text-muted-foreground italic">
+
+                <p className="text-[10px] leading-relaxed text-muted-foreground italic">
                   ⚠️ {t("aiDisclaimer")}
                 </p>
               </div>
@@ -289,62 +664,67 @@ const Chat = () => {
       </div>
 
       {voice && (
-        <div className="fixed inset-0 z-40 bg-foreground/60 flex flex-col items-center justify-center text-primary-foreground" role="dialog">
-          <div className="relative w-32 h-32 flex items-center justify-center">
-            <span className="absolute inset-0 rounded-full bg-primary animate-pulse-ring" />
-            <span className="absolute inset-0 rounded-full bg-primary opacity-90" />
-            <Mic size={36} className="relative z-10" />
+        <div className="fixed inset-0 z-40 bg-foreground/80 backdrop-blur-sm flex flex-col items-center justify-center text-primary-foreground" role="dialog">
+          <div className="relative w-28 h-28 flex items-center justify-center mb-6">
+            {isRecording && (
+              <>
+                <span className="absolute inset-0 rounded-full bg-primary/30 animate-ping" />
+                <span className="absolute inset-[-8px] rounded-full border-2 border-primary/40 animate-pulse" />
+              </>
+            )}
+            <span className={cn(
+              "absolute inset-0 rounded-full transition-colors",
+              isRecording ? "bg-primary" : "bg-muted/40"
+            )} />
+            <Mic size={32} className="relative z-10" />
           </div>
-          <p className="mt-6 text-sm">{typing ? t("processing") : t("listening")}</p>
+
+          <p className="text-sm font-medium mb-1">
+            {isRecording ? "Listening…" : "Tap mic to speak"}
+          </p>
+
+          {/* Live transcript display */}
+          {voiceTranscript && (
+            <div className="mx-6 mt-3 mb-4 max-w-xs w-full bg-foreground/20 rounded-2xl px-4 py-3 text-sm text-center leading-snug">
+              {voiceTranscript}
+            </div>
+          )}
+
+          {/* Controls */}
+          <div className="flex gap-3 mt-4">
+            {!isRecording ? (
+              <button
+                onClick={startVoiceRecognition}
+                className="px-6 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-semibold tap shadow-lg"
+              >
+                <Mic size={16} className="inline mr-2" />Start Recording
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  const hasSpeechRecognition = !!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition;
+                  hasSpeechRecognition ? stopRecognition() : stopGroqFallback();
+                }}
+                className="px-6 py-2.5 rounded-full bg-destructive text-destructive-foreground text-sm font-semibold tap shadow-lg"
+              >
+                <Square size={14} className="inline mr-2" />Stop
+              </button>
+            )}
+            {voiceTranscript && !isRecording && (
+              <button
+                onClick={() => sendVoiceTranscript(voiceTranscript)}
+                className="px-6 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-semibold tap shadow-lg"
+              >
+                <Send size={14} className="inline mr-2" />Send
+              </button>
+            )}
+          </div>
+
           <button
-            onClick={async () => {
-              if (typing) return;
-              setTyping(true);
-              try {
-                // Simulate stopping the recorder and fetching (since we don't have the full MediaRecorder ref in this small edit context, we'll just show the user how to wire the blob)
-                // In a real flow, MediaRecorder.stop() triggers ondataavailable which gives the Blob.
-                // We'll just fetch from /api/voice-query using the browser API when available
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
-                const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-                const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 });
-                const chunks: BlobPart[] = [];
-                recorder.ondataavailable = e => chunks.push(e.data);
-                recorder.onstop = async () => {
-                  const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
-                  stream.getTracks().forEach(t => t.stop());
-                  const fd = new FormData();
-                  fd.append('audio', blob, 'audio.webm');
-                  fd.append('lang', lang);
-                  try {
-                    const res = await fetch('/api/voice-query', { method: 'POST', body: fd });
-                    const dataText = res.headers.get('X-Query-Result');
-                    if (dataText) {
-                      const data = JSON.parse(dataText);
-                      setMsgs(m => [...m, { id: crypto.randomUUID(), role: "ai", text: data.buddy_text || data.translated || "Audio received." }]);
-                    }
-                  } catch (e) {
-                    console.error("Voice error", e);
-                  } finally {
-                    setTyping(false);
-                    setVoice(false);
-                  }
-                };
-                // For demonstration, we'll just stop after 3 seconds if user clicks
-                recorder.start();
-                setTimeout(() => recorder.stop(), 3000);
-              } catch (err) {
-                console.error(err);
-                setTyping(false);
-                setVoice(false);
-              }
-            }}
-            disabled={typing}
-            className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm tap shadow-card"
+            onClick={() => { stopRecognition(); stopGroqFallback(); setVoice(false); setVoiceTranscript(""); }}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-card/20 text-sm tap"
           >
-            {typing ? "..." : t("verifyOtp") /* the design had verifyOtp here for some reason */}
-          </button>
-          <button onClick={() => setVoice(false)} className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-card text-foreground text-sm tap">
-            <X size={16} /> {t("cancel")}
+            <X size={16} /> Cancel
           </button>
         </div>
       )}
