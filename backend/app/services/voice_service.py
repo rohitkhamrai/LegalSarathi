@@ -1,18 +1,17 @@
 """
-Voice Service — Groq Whisper STT + gTTS
+Voice Service — Groq Whisper STT + edge-tts (Microsoft Neural)
 
-STT: Uses Groq's Whisper API (whisper-large-v3-turbo) — free tier.
-  - Accepts browser-native WebM/Opus/OGG audio directly
-  - temperature=0.0 → deterministic, no hallucination
-  - initial_prompt → domain-primed for Indian legal vocabulary
-  - Correct response parsing for Groq SDK v1.x (returns Transcription object)
-
-TTS: Uses gTTS (Google TTS) — free, offline-friendly.
+STT: Groq Whisper API (whisper-large-v3-turbo)
+TTS: edge-tts — Microsoft Edge Neural voices
+  - Free, no API key, async streaming
+  - Natural prosody (not robotic)
+  - Supports 13 Indian languages via Neural voices
 """
 
 import io
+import asyncio
 import tempfile
-from gtts import gTTS
+import edge_tts
 import groq as groq_sdk
 from app.core.config import settings
 
@@ -23,8 +22,23 @@ LANG_TO_WHISPER = {
     "ml": "ml", "pa": "pa", "ur": "ur", "or": "or", "as": "as",
 }
 
+# Microsoft Neural voices per language — chosen for naturalness
+# Full list: https://learn.microsoft.com/azure/ai-services/speech-service/language-support
+EDGE_TTS_VOICES = {
+    "hi": "hi-IN-SwaraNeural",      # Hindi — natural female
+    "ta": "ta-IN-PallaviNeural",    # Tamil — female
+    "te": "te-IN-ShrutiNeural",     # Telugu — female
+    "mr": "mr-IN-AarohiNeural",     # Marathi — female
+    "bn": "bn-IN-TanishaaNeural",   # Bengali — female
+    "en": "en-IN-NeerjaNeural",     # English (Indian accent)
+    "gu": "gu-IN-DhwaniNeural",     # Gujarati — female
+    "kn": "kn-IN-SapnaNeural",      # Kannada — female
+    "ml": "ml-IN-SobhanaNeural",    # Malayalam — female
+    "pa": "pa-IN-OjaswineNeural",   # Punjabi — female
+    "ur": "ur-PK-UzmaNeural",       # Urdu — female
+}
+
 # Domain-specific legal vocabulary prompt per language
-# Whisper uses this to prime its vocabulary before transcription
 LEGAL_PROMPTS = {
     "en": (
         "This is an Indian legal query. Common terms: FIR, IPC, BNSS, BNS, Section, "
@@ -59,30 +73,20 @@ class VoiceService:
         self._groq = groq_sdk.Groq(api_key=settings.GROQ_API_KEY)
 
     def transcribe(self, audio_bytes: bytes, lang: str = "hi") -> str:
-        """
-        STT: audio bytes (WebM/Opus/OGG/WAV) → text via Groq Whisper.
-        lang: 2-letter code (e.g. 'hi', 'ta', 'en')
-        """
+        """STT: audio bytes (WebM/Opus/OGG/WAV) → text via Groq Whisper."""
         lang_code = lang.split("-")[0].lower()
         whisper_lang = LANG_TO_WHISPER.get(lang_code, "hi")
-
-        # Pick domain prompt — fallback to English prompt if no native one
         initial_prompt = LEGAL_PROMPTS.get(lang_code, LEGAL_PROMPTS["en"])
-
-        # Groq Whisper requires a named file-like object for MIME detection
-        # We always label it webm — Groq's Whisper handles the actual codec
         audio_file = ("audio.webm", io.BytesIO(audio_bytes), "audio/webm")
-
         try:
             response = self._groq.audio.transcriptions.create(
                 model="whisper-large-v3-turbo",
                 file=audio_file,
                 language=whisper_lang,
-                prompt=initial_prompt,        # domain priming
-                temperature=0.0,              # deterministic — no hallucination
-                response_format="verbose_json",  # gives us text + language detected
+                prompt=initial_prompt,
+                temperature=0.0,
+                response_format="verbose_json",
             )
-            # Groq SDK v1.x returns a Transcription object — access .text
             text = (response.text or "").strip()
             detected = getattr(response, "language", whisper_lang)
             print(f"[STT] Whisper transcribed ({lang_code}, detected={detected}): '{text[:120]}'")
@@ -92,13 +96,25 @@ class VoiceService:
             return ""
 
     def synthesize(self, text: str, lang: str = "hi") -> str:
-        """TTS: text → mp3 path. Uses gTTS. Returns absolute temp file path."""
-        tts_lang = lang.split("-")[0].lower()
-        supported = {'hi', 'ta', 'te', 'mr', 'bn', 'en', 'gu', 'kn', 'ml', 'pa', 'ur', 'or', 'as'}
-        tts_lang = tts_lang if tts_lang in supported else 'hi'
+        """TTS: text → mp3 path via edge-tts (Microsoft Neural voices)."""
+        lang_code = lang.split("-")[0].lower()
+        voice = EDGE_TTS_VOICES.get(lang_code, "hi-IN-SwaraNeural")
 
-        tts = gTTS(text=text, lang=tts_lang, slow=False)
         tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, prefix="sarathi_tts_")
         tmp.close()
-        tts.save(tmp.name)
+
+        async def _generate():
+            communicate = edge_tts.Communicate(text=text, voice=voice, rate="+5%", pitch="+0Hz")
+            await communicate.save(tmp.name)
+
+        try:
+            # Run async edge-tts in a new event loop (called from sync context)
+            asyncio.run(_generate())
+        except RuntimeError:
+            # Already inside an event loop (e.g. during testing)
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_generate())
+            loop.close()
+
+        print(f"[TTS] edge-tts voice={voice}, chars={len(text)}, saved={tmp.name}")
         return tmp.name
