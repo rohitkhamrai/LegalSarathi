@@ -118,6 +118,47 @@ const Chat = () => {
     { label: t("consumerComplaint"), q: "How do I file a consumer complaint?" },
   ];
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!tryConsume()) return;
+
+    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 ${t("uploading" as any) || "Uploading"}: ${file.name}` }]);
+    setTyping(true);
+
+    const fd = new FormData();
+    fd.append("image", file);
+    fd.append("lang", lang);
+
+    try {
+      const res = await fetch("/api/ocr-query", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error("OCR failed");
+      const data = await res.json();
+
+      setMsgs((m) => [
+        ...m,
+        {
+          id: crypto.randomUUID(),
+          role: "ai",
+          text: data.buddy_text || data.translated || "Document processed.",
+          topic: "legal",
+          lawChip: data.law_chip || undefined,
+          followups: data.followups || [],
+        },
+      ]);
+    } catch (err) {
+      setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "ai", text: "Error processing document. Please ensure it's a clear image or PDF." }]);
+    } finally {
+      setTyping(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return (
     <ScreenShell>
       <StickyHeader title={t("chatTitle")} showBack showLanguagePill />
@@ -210,7 +251,18 @@ const Chat = () => {
             ))}
           </div>
           <div className="flex items-center gap-2 ls-card h-12 px-2">
-            <button aria-label="Attach" className="w-9 h-9 flex items-center justify-center text-muted-foreground tap">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              accept="image/*,.pdf"
+              className="hidden"
+            />
+            <button 
+              aria-label="Attach" 
+              onClick={() => fileInputRef.current?.click()}
+              className="w-9 h-9 flex items-center justify-center text-muted-foreground tap"
+            >
               <Paperclip size={18} />
             </button>
             <input
