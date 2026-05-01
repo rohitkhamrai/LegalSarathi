@@ -41,7 +41,7 @@ playwright install chromium
 ---
 
 ## 3. Frontend Setup
-The frontend is a modern Next.js application.
+The frontend is a high-performance Vite + React application.
 
 ```powershell
 cd frontend
@@ -66,7 +66,7 @@ cd frontend
 npm run dev
 ```
 
-The application will be available at: **http://localhost:3000**
+The application will be available at: **http://localhost:8080**
 
 ---
 
