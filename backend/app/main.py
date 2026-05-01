@@ -108,7 +108,7 @@ async def ocr_query(
 # ── Voice Endpoints ───────────────────────────────────────────────────────────
 
 @app.post("/api/tts")
-async def text_to_speech(req: TTSRequest):
+def text_to_speech(req: TTSRequest):
     """Standalone TTS — convert any text to mp3 in given lang. Used for replay."""
     try:
         mp3_path = voice_service.synthesize(req.text, lang=req.lang)
@@ -143,8 +143,8 @@ async def voice_query(
             media_type="audio/mpeg",
             filename="response.mp3",
             headers={
-                "X-Transcription": transcribed[:200],
-                "X-Query-Result": __import__("json").dumps(result, ensure_ascii=False)[:2000]
+                "X-Transcription": __import__("urllib.parse").parse.quote(transcribed[:200]),
+                "X-Query-Result": __import__("json").dumps(result, ensure_ascii=True)
             }
         )
     except HTTPException:
