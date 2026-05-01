@@ -55,15 +55,9 @@ export const GuestProvider = ({ children }: { children: ReactNode }) => {
   }, [count]);
 
   const tryConsume = useCallback((): boolean => {
-    if (isUnlimited || isAuthenticated) return true;
-    if (count >= LIMIT) {
-      setShowLoginPrompt(true);
-      return false;
-    }
-    const next = count + 1;
-    setCount(next);
+    // Limit removed for developer
     return true;
-  }, [count, isAuthenticated, isUnlimited]);
+  }, []);
 
   const openUpgrade = useCallback(() => setShowUpgrade(true), []);
   const closeUpgrade = useCallback(() => setShowUpgrade(false), []);
