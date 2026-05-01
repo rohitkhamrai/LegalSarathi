@@ -14,7 +14,7 @@ torch
 requests
 beautifulsoup4
 SpeechRecognition
-gTTS
+edge-tts
 reportlab
 rank-bm25
 sentence-transformers
