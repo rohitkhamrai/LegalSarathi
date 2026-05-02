@@ -1,6 +1,11 @@
 import groq
 import json
 from app.core.config import settings
+try:
+    from deep_translator import GoogleTranslator as _GT
+    _DEEP_TRANSLATOR_OK = True
+except Exception:
+    _DEEP_TRANSLATOR_OK = False
 
 # Language names for prompting Groq to respond in target lang
 LANG_NAMES = {
@@ -22,7 +27,10 @@ LANG_NAMES = {
 class GroqService:
     def __init__(self):
         self.client = groq.Groq(api_key=settings.GROQ_API_KEY)
-        self.model = "llama-3.1-8b-instant"
+        # Fast+high-RPD model for simple extraction tasks
+        self.fast_model = "llama-3.1-8b-instant"
+        # Best reasoning + multilingual for full legal synthesis
+        self.synthesis_model = "openai/gpt-oss-120b"
 
     async def extract_legal_keys(self, text: str) -> list:
         system_prompt = """
@@ -42,7 +50,7 @@ Output: Warrantless Arrest, BNS Section 303, Right to be informed, Petty Theft, 
 """
         try:
             completion = self.client.chat.completions.create(
-                model=self.model,
+                model=self.fast_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text}
@@ -122,13 +130,13 @@ RULES:
 
         try:
             completion = self.client.chat.completions.create(
-                model=self.model,
+                model=self.synthesis_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Situation: {english_text}"}
                 ],
                 temperature=0.3,
-                max_tokens=1500,
+                max_tokens=2000,
             )
             content = completion.choices[0].message.content.strip()
             # Strip markdown code fences if present
@@ -136,13 +144,68 @@ RULES:
                 content = content.split("```")[1]
                 if content.startswith("json"):
                     content = content[4:]
-            return json.loads(content)
+            result = json.loads(content)
+
+            # ── Post-synthesis language guarantee ─────────────────────────────
+            # If target is not English and deep_translator is available,
+            # re-translate key text fields that might have drifted to English.
+            if target_lang not in ("en", "en-IN") and _DEEP_TRANSLATOR_OK:
+                result = self._ensure_target_lang(result, target_lang)
+
+            return result
         except json.JSONDecodeError as e:
             print(f"Groq JSON parse error: {e}")
             return self._fallback_response(target_lang)
         except Exception as e:
             print(f"Groq Buddy Synthesis Error: {e}")
             return self._fallback_response(target_lang)
+
+    # ── Language guarantee helper ─────────────────────────────────────────────
+    # Maps 2-letter codes to deep_translator / Google Translate language codes
+    _LANG_MAP = {
+        "hi": "hi", "ta": "ta", "te": "te", "mr": "mr",
+        "bn": "bn", "gu": "gu", "kn": "kn", "ml": "ml",
+        "pa": "pa", "ur": "ur", "or": "or", "as": "as",
+    }
+
+    def _translate_field(self, text: str, target_lang: str) -> str:
+        """Translate a single string to target_lang via deep_translator."""
+        if not text or not isinstance(text, str):
+            return text
+        tgt = self._LANG_MAP.get(target_lang, "hi")
+        try:
+            return _GT(source="auto", target=tgt).translate(text)
+        except Exception as e:
+            print(f"[Lang fix] deep_translator error: {e}")
+            return text
+
+    def _translate_list(self, items: list, target_lang: str) -> list:
+        return [self._translate_field(i, target_lang) for i in items]
+
+    def _ensure_target_lang(self, data: dict, target_lang: str) -> dict:
+        """
+        Heuristic: if buddy_text is mostly ASCII (likely English),
+        re-translate all text fields to target_lang.
+        """
+        buddy = data.get("buddy_text", "")
+        # Count non-ASCII chars — Indic scripts are all non-ASCII
+        non_ascii = sum(1 for c in buddy if ord(c) > 127)
+        ratio = non_ascii / max(len(buddy), 1)
+        if ratio > 0.25:
+            # Already in Indic script — looks correct
+            print(f"[Lang fix] buddy_text looks native ({ratio:.0%} non-ASCII), skip re-translate")
+            return data
+
+        print(f"[Lang fix] buddy_text is {ratio:.0%} non-ASCII → re-translating to '{target_lang}'")
+        str_fields = ["situation_summary", "jurisdiction_note", "awareness", "buddy_text"]
+        list_fields = ["rights", "action_steps", "do_not_do", "evidence_required"]
+        for f in str_fields:
+            if data.get(f):
+                data[f] = self._translate_field(data[f], target_lang)
+        for f in list_fields:
+            if data.get(f):
+                data[f] = self._translate_list(data[f], target_lang)
+        return data
 
     def _fallback_response(self, lang: str) -> dict:
         fallbacks = {
