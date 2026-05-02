@@ -62,7 +62,7 @@ class CitationAuditService:
             # No citations at all — check if any retrieved content appears in answer
             grounded_count = sum(
                 1 for c in retrieved_chunks
-                if any(word in answer_text for word in c["text"].split()[:5])
+                if any(word in answer_text for word in c.get("text", c.get("content", "")).split()[:5])
             )
             citation_score = min(0.5, grounded_count / max(len(retrieved_chunks), 1))
             badge = "⚠️ No explicit citations"
