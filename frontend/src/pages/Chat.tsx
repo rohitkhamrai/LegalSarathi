@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useLocation } from "react-router-dom";
-import { Mic, Paperclip, Send, X, Volume2, Square } from "lucide-react";
+import { Mic, Paperclip, Send, X, Volume2, Square, Pause, Play } from "lucide-react";
 import { ScreenShell } from "@/components/layout/ScreenShell";
 import { StickyHeader } from "@/components/layout/StickyHeader";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -54,12 +54,59 @@ const Chat = () => {
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [isRecording, setIsRecording] = useState(false);
 
+  // Female voice picker
+  const [femaleVoices, setFemaleVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceIdx, setSelectedVoiceIdx] = useState(0);
+
   // BCP-47 locale map for Web Speech API
   const LANG_TO_BCP47: Record<string, string> = {
     hi: "hi-IN", ta: "ta-IN", te: "te-IN", mr: "mr-IN",
     bn: "bn-IN", en: "en-IN", gu: "gu-IN", kn: "kn-IN",
     ml: "ml-IN", pa: "pa-IN", ur: "ur-PK", or: "or-IN", as: "as-IN",
   };
+
+  // Load female voices — async in Chrome, fires voiceschanged
+  const loadFemaleVoices = () => {
+    const MALE_BLACKLIST = [
+      "male","man","guy","boy","hemant","kailash","madhur","ravi","prabhat","aditi-m",
+      "ganesh","mohan","arjun","aditya","amit","david","mark","george","james",
+      "richard","paul","reed","eric","andrew","christopher","daniel","tom","alex",
+      "fred","bruce","ralph","vijay","rohit","suresh","ramesh","mahesh","rakesh",
+      "ajay","sanjay","kiran-m","raj","hari",
+    ];
+    const FEMALE_KEYWORDS = [
+      "female","woman","girl","aditi","priya","divya","heera","kalpana","sapna",
+      "zira","neerja","swara","aarohi","pallavi","samantha","victoria","karen","moira",
+    ];
+    const bcp47 = LANG_TO_BCP47[lang.split("-")[0]] || "hi-IN";
+    const langPrefix = bcp47.split("-")[0];
+
+    const all = window.speechSynthesis?.getVoices() ?? [];
+    const isFemale = (v: SpeechSynthesisVoice) => {
+      const n = v.name.toLowerCase();
+      if (MALE_BLACKLIST.some((k) => n.includes(k))) return false;
+      if (FEMALE_KEYWORDS.some((k) => n.includes(k))) return true;
+      return !/voice\s*\d/.test(n);
+    };
+
+    // Priority: exact locale first, then same lang prefix
+    const exact = all.filter((v) => v.lang === bcp47 && isFemale(v));
+    const prefix = all.filter((v) => v.lang !== bcp47 && v.lang.startsWith(langPrefix) && isFemale(v));
+    const top3 = [...exact, ...prefix].slice(0, 3);
+    if (top3.length > 0) {
+      setFemaleVoices(top3);
+      setSelectedVoiceIdx(0);
+    }
+  };
+
+  // Load voices on mount + when lang changes
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    loadFemaleVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadFemaleVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", loadFemaleVoices);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
 
   const stopRecognition = () => {
     if (recognitionRef.current) {
@@ -174,8 +221,18 @@ const Chat = () => {
                 role: "ai",
                 text: data.buddy_text || data.translated || "Audio received.",
                 topic: "legal",
-                lawChip: data.law_chip || undefined,
+                lawChip: data.legal_keys?.[0] || undefined,
                 followups: data.followups || [],
+                severityLevel: data.severity_level,
+                situationSummary: data.situation_summary,
+                rights: data.rights || [],
+                actionSteps: data.action_steps || [],
+                doNotDo: data.do_not_do || [],
+                evidenceRequired: data.evidence_required || [],
+                jurisdictionNote: data.jurisdiction_note,
+                awareness: data.awareness,
+                ragChunksUsed: data.rag_chunks_used || [],
+                citationBadge: data.citation_badge,
               },
             ]);
           }
@@ -208,62 +265,172 @@ const Chat = () => {
 
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const toggleAudio = (m: Msg) => {
+    if (playingId === m.id) {
+      if (isPaused) {
+        window.speechSynthesis?.resume();
+        audioRef.current?.play();
+        setIsPaused(false);
+      } else {
+        window.speechSynthesis?.pause();
+        audioRef.current?.pause();
+        setIsPaused(true);
+      }
+      return;
+    }
+
     // Stop anything currently playing
+    window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    setPlayingId(null);
+    setIsPaused(false);
+
+    // Primary: browser SpeechSynthesis — instant, no network, uses OS Neural voices
+    if (typeof window !== "undefined" && "speechSynthesis" in window && femaleVoices.length > 0) {
+      const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
+
+      // Exhaustive male voice blacklist — Indian TTS engines + generic
+      const MALE_BLACKLIST = [
+        "male", "man", "guy", "boy",
+        // Google Indian male voices
+        "hemant", "kailash", "madhur", "ravi", "prabhat", "aditi-m",
+        // Microsoft male voices (edge/windows)
+        "ganesh", "mohan", "arjun", "aditya", "amit",
+        "david", "mark", "george", "james", "richard", "paul",
+        "reed", "eric", "guy", "andrew", "christopher",
+        // Apple male voices
+        "daniel", "tom", "alex", "fred", "bruce", "ralph",
+        // Common male Indian names in TTS
+        "vijay", "rohit", "suresh", "ramesh", "mahesh", "rakesh",
+        "ajay", "sanjay", "kiran-m", "raj", "hari",
+      ];
+
+      // Female voice keyword whitelist (positive match is stronger signal)
+      const FEMALE_KEYWORDS = [
+        "female", "woman", "girl",
+        // Google Indian female voices
+        "aditi", "priya", "divya", "heera", "kalpana", "sapna",
+        // Microsoft female voices (edge/windows)
+        "zira", "heera", "neerja", "swara", "aarohi", "pallavi",
+        // Apple female voices
+        "samantha", "victoria", "karen", "moira",
+        // Generic female identifiers
+        "female", "woman", "neural female",
+      ];
+
+      const isFemale = (v: SpeechSynthesisVoice): boolean => {
+        const name = v.name.toLowerCase();
+        // Hard reject: any male keyword present
+        if (MALE_BLACKLIST.some((kw) => name.includes(kw))) return false;
+        // Positive confirm: known female keyword
+        if (FEMALE_KEYWORDS.some((kw) => name.includes(kw))) return true;
+        // Unknown voice name — treat as potentially male, reject unless locale matches exactly
+        // For unknown names, allow only if NOT containing numbers (e.g. "voice 2" = often male default)
+        return !/voice\s*\d/.test(name);
+      };
+
+      const pickFemaleVoice = (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
+        return (
+          // 1st: exact locale + neural/google + confirmed female
+          voices.find((v) =>
+            v.lang === bcp47 && isFemale(v) &&
+            (v.name.toLowerCase().includes("neural") || v.name.toLowerCase().includes("google"))
+          ) ||
+          // 2nd: exact locale + confirmed female keyword
+          voices.find((v) =>
+            v.lang === bcp47 &&
+            FEMALE_KEYWORDS.some((kw) => v.name.toLowerCase().includes(kw))
+          ) ||
+          // 3rd: exact locale + passes isFemale filter
+          voices.find((v) => v.lang === bcp47 && isFemale(v)) ||
+          // 4th: same language prefix + confirmed female keyword
+          voices.find((v) =>
+            v.lang.startsWith(bcp47.split("-")[0]) &&
+            FEMALE_KEYWORDS.some((kw) => v.name.toLowerCase().includes(kw))
+          ) ||
+          // 5th: same language prefix + passes isFemale filter
+          voices.find((v) => v.lang.startsWith(bcp47.split("-")[0]) && isFemale(v)) ||
+          null  // no female voice found → block speech, use backend
+        );
+      };
+
+      const speakWithVoice = (_voices: SpeechSynthesisVoice[]) => {
+        // Use the user-selected female voice from state
+        const femaleVoice = femaleVoices[selectedVoiceIdx] ?? femaleVoices[0] ?? null;
+        if (!femaleVoice) {
+          console.warn("[TTS] No female browser voice found, using backend edge-tts");
+          playFromBackend(m);
+          return;
+        }
+        const utterance = new SpeechSynthesisUtterance(m.text);
+        utterance.lang = bcp47;
+        utterance.voice = femaleVoice;
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+        utterance.onstart = () => { setPlayingId(m.id); setIsPaused(false); };
+        utterance.onend = () => { setPlayingId(null); setIsPaused(false); };
+        utterance.onerror = async () => {
+          setPlayingId(null);
+          setIsPaused(false);
+          await playFromBackend(m);
+        };
+        window.speechSynthesis.speak(utterance);
+        setPlayingId(m.id);
+      };
+
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        speakWithVoice(voices);
+      } else {
+        // Voices not loaded yet (async in Chrome) — wait for voiceschanged
+        const onVoicesChanged = () => {
+          window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+          speakWithVoice(window.speechSynthesis.getVoices());
+        };
+        window.speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
+        // Safety timeout: if voiceschanged never fires (Firefox), fall back to backend
+        setTimeout(() => {
+          window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+          const v = window.speechSynthesis.getVoices();
+          if (v.length > 0) speakWithVoice(v);
+          else playFromBackend(m);
+        }, 1500);
+      }
+      return;
+    }
+
+    // Fallback: backend edge-tts (Microsoft Neural — always female)
+    playFromBackend(m);
+  };
+
+  const handleVoiceChange = (idx: number, m: Msg) => {
+    setSelectedVoiceIdx(idx);
     if (playingId === m.id) {
       window.speechSynthesis?.cancel();
       audioRef.current?.pause();
       setPlayingId(null);
-      return;
+      setIsPaused(false);
+      // Restart speech immediately with new voice
+      setTimeout(() => {
+        const femaleVoice = femaleVoices[idx];
+        if (!femaleVoice) return;
+        const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
+        const utterance = new SpeechSynthesisUtterance(m.text);
+        utterance.lang = bcp47;
+        utterance.voice = femaleVoice;
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+        utterance.onstart = () => { setPlayingId(m.id); setIsPaused(false); };
+        utterance.onend = () => { setPlayingId(null); setIsPaused(false); };
+        window.speechSynthesis?.speak(utterance);
+        setPlayingId(m.id);
+      }, 50);
     }
-    window.speechSynthesis?.cancel();
-    audioRef.current?.pause();
-    setPlayingId(null);
-
-    // Primary: browser SpeechSynthesis — instant, no network, uses OS Neural voices
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(m.text);
-      const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
-      utterance.lang = bcp47;
-      utterance.rate = 1.05;   // slightly faster than default — more natural
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-
-      // Female-only voice selection — filter out any known male voices
-      const voices = window.speechSynthesis.getVoices();
-      const MALE_KEYWORDS = ["male", "man", "guy", "hemant", "kailash", "madhur", "ravi", "prabhat", "aditi-m"];
-      const isFemale = (v: SpeechSynthesisVoice) =>
-        !MALE_KEYWORDS.some((kw) => v.name.toLowerCase().includes(kw));
-
-      const preferred =
-        // 1st choice: exact locale + neural/google + female
-        voices.find((v) =>
-          v.lang === bcp47 && isFemale(v) &&
-          (v.name.toLowerCase().includes("neural") || v.name.toLowerCase().includes("google"))
-        ) ||
-        // 2nd choice: exact locale + female (any)
-        voices.find((v) => v.lang === bcp47 && isFemale(v)) ||
-        // 3rd choice: same language prefix + female
-        voices.find((v) => v.lang.startsWith(bcp47.split("-")[0]) && isFemale(v));
-
-      if (preferred) utterance.voice = preferred;
-
-      utterance.onstart = () => setPlayingId(m.id);
-      utterance.onend = () => setPlayingId(null);
-      utterance.onerror = async () => {
-        // Fallback to backend edge-tts if browser voice fails
-        setPlayingId(null);
-        await playFromBackend(m);
-      };
-      window.speechSynthesis.speak(utterance);
-      setPlayingId(m.id);
-      return;
-    }
-
-    // Fallback: backend edge-tts (Microsoft Neural)
-    playFromBackend(m);
   };
 
   const playFromBackend = async (m: Msg) => {
@@ -279,14 +446,16 @@ const Chat = () => {
       const url = URL.createObjectURL(blob);
       if (!audioRef.current) audioRef.current = new Audio();
       audioRef.current.src = url;
-      audioRef.current.onended = () => setPlayingId(null);
+      audioRef.current.onended = () => { setPlayingId(null); setIsPaused(false); };
       setLoadingAudioId(null);
       setPlayingId(m.id);
-      try { await audioRef.current.play(); } catch { setPlayingId(null); }
+      setIsPaused(false);
+      try { await audioRef.current.play(); } catch { setPlayingId(null); setIsPaused(false); }
     } catch (e) {
       console.error(e);
       setLoadingAudioId(null);
       setPlayingId(null);
+      setIsPaused(false);
     }
   };
 
@@ -573,24 +742,46 @@ const Chat = () => {
                 )}
 
                 {/* Action buttons */}
-                <div className="flex flex-wrap gap-2 pt-1 border-t border-border">
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border">
                   <button
                     onClick={() => toggleAudio(m)}
                     className="w-9 h-9 flex items-center justify-center rounded-button border border-border text-foreground tap shrink-0"
-                    title={playingId === m.id ? "Stop audio" : "Play audio"}
+                    title={playingId === m.id ? (isPaused ? "Resume audio" : "Pause audio") : "Play audio"}
                     disabled={loadingAudioId === m.id}
                   >
                     {loadingAudioId === m.id ? (
                       <div className="w-3.5 h-3.5 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
                     ) : playingId === m.id ? (
-                      <Square size={14} className="text-primary" />
+                      isPaused ? <Play size={14} className="text-primary" /> : <Pause size={14} className="text-primary" />
                     ) : (
                       <Volume2 size={14} />
                     )}
                   </button>
+
+                  {/* Inline Voice Picker */}
+                  {femaleVoices.length > 0 && (
+                    <div className="flex gap-1.5 ml-1">
+                      {femaleVoices.map((v, i) => (
+                        <button
+                          key={v.name}
+                          onClick={() => handleVoiceChange(i, m)}
+                          title={v.name}
+                          className={cn(
+                            "px-2 py-1 rounded-full text-[9px] font-semibold border transition-all duration-150 tap",
+                            selectedVoiceIdx === i
+                              ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                              : "bg-card border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                          )}
+                        >
+                          V{i + 1}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   <button
                     onClick={() => navigate("/lawyers")}
-                    className="h-9 text-xs px-3 rounded-button border border-border text-foreground tap"
+                    className="ml-auto h-9 text-xs px-3 rounded-button border border-border text-foreground tap"
                   >
                     {t("chatConsultLawyer")}
                   </button>
