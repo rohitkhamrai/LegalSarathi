@@ -17,6 +17,8 @@ interface Msg {
   id: string;
   role: "ai" | "user";
   text: string;
+  originalUserText?: string;
+  queryInTargetLang?: string;
   topic?: ChatTopic;
   lawChip?: string;
   followups?: string[];
@@ -49,14 +51,14 @@ const Chat = () => {
   const [urgent, setUrgent] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const seededRef = useRef(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [isRecording, setIsRecording] = useState(false);
 
   // Female voice picker
   const [femaleVoices, setFemaleVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoiceIdx, setSelectedVoiceIdx] = useState(0);
+  const [voicePrefs, setVoicePrefs] = useState<Record<string, number>>({});
 
   // BCP-47 locale map for Web Speech API
   const LANG_TO_BCP47: Record<string, string> = {
@@ -95,7 +97,6 @@ const Chat = () => {
     const top3 = [...exact, ...prefix].slice(0, 3);
     if (top3.length > 0) {
       setFemaleVoices(top3);
-      setSelectedVoiceIdx(0);
     }
   };
 
@@ -126,8 +127,8 @@ const Chat = () => {
   const startVoiceRecognition = () => {
     setVoiceTranscript("");
     const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      (window as Window & { SpeechRecognition?: typeof globalThis.SpeechRecognition; webkitSpeechRecognition?: typeof globalThis.SpeechRecognition }).SpeechRecognition ||
+      (window as Window & { SpeechRecognition?: typeof globalThis.SpeechRecognition; webkitSpeechRecognition?: typeof globalThis.SpeechRecognition }).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       // Fallback: Groq Whisper via MediaRecorder
@@ -147,7 +148,7 @@ const Chat = () => {
 
     recognition.onstart = () => setIsRecording(true);
 
-    recognition.onresult = (e: any) => {
+    recognition.onresult = (e: SpeechRecognitionEvent) => {
       let interimChunk = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const segment = e.results[i][0].transcript;
@@ -163,7 +164,7 @@ const Chat = () => {
       setVoiceTranscript(finalAccum.text + interimChunk);
     };
 
-    recognition.onerror = (e: any) => {
+    recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
       console.error("Speech recognition error:", e.error);
       if (e.error === "not-allowed") {
         alert("Microphone access denied. Please allow microphone access.");
@@ -220,6 +221,8 @@ const Chat = () => {
                 id: newMsgId,
                 role: "ai",
                 text: data.buddy_text || data.translated || "Audio received.",
+                originalUserText: data.query,
+                queryInTargetLang: data.query_in_target_lang,
                 topic: "legal",
                 lawChip: data.legal_keys?.[0] || undefined,
                 followups: data.followups || [],
@@ -246,7 +249,7 @@ const Chat = () => {
       };
       setIsRecording(true);
       recorder.start();
-      (window as any).__legalsarthiRecorder = { recorder, stream };
+      (window as Window & { __legalsarthiRecorder?: { recorder: MediaRecorder; stream: MediaStream } }).__legalsarthiRecorder = { recorder, stream };
     } catch (err) {
       console.error(err);
       setVoice(false);
@@ -254,112 +257,61 @@ const Chat = () => {
   };
 
   const stopGroqFallback = () => {
-    const r = (window as any).__legalsarthiRecorder;
+    const r = (window as Window & { __legalsarthiRecorder?: { recorder: MediaRecorder; stream: MediaStream } }).__legalsarthiRecorder;
     if (r) {
       r.recorder.stop();
       r.stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
-      delete (window as any).__legalsarthiRecorder;
+      delete (window as Window & { __legalsarthiRecorder?: { recorder: MediaRecorder; stream: MediaStream } }).__legalsarthiRecorder;
     }
     setIsRecording(false);
   };
 
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
-  const [isPaused, setIsPaused] = useState(false);
+  const [playbackState, setPlaybackState] = useState<{
+    id: string;
+    engine: "browser" | "backend";
+    state: "playing" | "paused" | "loading";
+  } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const toggleAudio = (m: Msg) => {
-    if (playingId === m.id) {
-      if (isPaused) {
-        window.speechSynthesis?.resume();
-        audioRef.current?.play();
-        setIsPaused(false);
+    const isAndroidChrome = /Android/i.test(navigator.userAgent) && /Chrome/i.test(navigator.userAgent);
+
+    if (playbackState?.id === m.id) {
+      if (playbackState.state === "loading") return;
+
+      if (playbackState.state === "paused") {
+        if (playbackState.engine === "browser") window.speechSynthesis?.resume();
+        else audioRef.current?.play();
+        setPlaybackState({ ...playbackState, state: "playing" });
       } else {
-        window.speechSynthesis?.pause();
-        audioRef.current?.pause();
-        setIsPaused(true);
+        if (playbackState.engine === "browser") {
+          if (isAndroidChrome) {
+            window.speechSynthesis?.cancel();
+            setPlaybackState(null);
+            return;
+          }
+          window.speechSynthesis?.pause();
+        } else {
+          audioRef.current?.pause();
+        }
+        setPlaybackState({ ...playbackState, state: "paused" });
       }
       return;
     }
 
-    // Stop anything currently playing
     window.speechSynthesis?.cancel();
-    audioRef.current?.pause();
-    setPlayingId(null);
-    setIsPaused(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+    }
+    setPlaybackState(null);
 
-    // Primary: browser SpeechSynthesis — instant, no network, uses OS Neural voices
     if (typeof window !== "undefined" && "speechSynthesis" in window && femaleVoices.length > 0) {
       const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
 
-      // Exhaustive male voice blacklist — Indian TTS engines + generic
-      const MALE_BLACKLIST = [
-        "male", "man", "guy", "boy",
-        // Google Indian male voices
-        "hemant", "kailash", "madhur", "ravi", "prabhat", "aditi-m",
-        // Microsoft male voices (edge/windows)
-        "ganesh", "mohan", "arjun", "aditya", "amit",
-        "david", "mark", "george", "james", "richard", "paul",
-        "reed", "eric", "guy", "andrew", "christopher",
-        // Apple male voices
-        "daniel", "tom", "alex", "fred", "bruce", "ralph",
-        // Common male Indian names in TTS
-        "vijay", "rohit", "suresh", "ramesh", "mahesh", "rakesh",
-        "ajay", "sanjay", "kiran-m", "raj", "hari",
-      ];
-
-      // Female voice keyword whitelist (positive match is stronger signal)
-      const FEMALE_KEYWORDS = [
-        "female", "woman", "girl",
-        // Google Indian female voices
-        "aditi", "priya", "divya", "heera", "kalpana", "sapna",
-        // Microsoft female voices (edge/windows)
-        "zira", "heera", "neerja", "swara", "aarohi", "pallavi",
-        // Apple female voices
-        "samantha", "victoria", "karen", "moira",
-        // Generic female identifiers
-        "female", "woman", "neural female",
-      ];
-
-      const isFemale = (v: SpeechSynthesisVoice): boolean => {
-        const name = v.name.toLowerCase();
-        // Hard reject: any male keyword present
-        if (MALE_BLACKLIST.some((kw) => name.includes(kw))) return false;
-        // Positive confirm: known female keyword
-        if (FEMALE_KEYWORDS.some((kw) => name.includes(kw))) return true;
-        // Unknown voice name — treat as potentially male, reject unless locale matches exactly
-        // For unknown names, allow only if NOT containing numbers (e.g. "voice 2" = often male default)
-        return !/voice\s*\d/.test(name);
-      };
-
-      const pickFemaleVoice = (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
-        return (
-          // 1st: exact locale + neural/google + confirmed female
-          voices.find((v) =>
-            v.lang === bcp47 && isFemale(v) &&
-            (v.name.toLowerCase().includes("neural") || v.name.toLowerCase().includes("google"))
-          ) ||
-          // 2nd: exact locale + confirmed female keyword
-          voices.find((v) =>
-            v.lang === bcp47 &&
-            FEMALE_KEYWORDS.some((kw) => v.name.toLowerCase().includes(kw))
-          ) ||
-          // 3rd: exact locale + passes isFemale filter
-          voices.find((v) => v.lang === bcp47 && isFemale(v)) ||
-          // 4th: same language prefix + confirmed female keyword
-          voices.find((v) =>
-            v.lang.startsWith(bcp47.split("-")[0]) &&
-            FEMALE_KEYWORDS.some((kw) => v.name.toLowerCase().includes(kw))
-          ) ||
-          // 5th: same language prefix + passes isFemale filter
-          voices.find((v) => v.lang.startsWith(bcp47.split("-")[0]) && isFemale(v)) ||
-          null  // no female voice found → block speech, use backend
-        );
-      };
-
-      const speakWithVoice = (_voices: SpeechSynthesisVoice[]) => {
-        // Use the user-selected female voice from state
-        const femaleVoice = femaleVoices[selectedVoiceIdx] ?? femaleVoices[0] ?? null;
+      const speakWithVoice = () => {
+        const idx = voicePrefs[m.id] ?? 0;
+        const femaleVoice = femaleVoices[idx] ?? femaleVoices[0] ?? null;
         if (!femaleVoice) {
           console.warn("[TTS] No female browser voice found, using backend edge-tts");
           playFromBackend(m);
@@ -371,50 +323,28 @@ const Chat = () => {
         utterance.rate = 1.05;
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
-        utterance.onstart = () => { setPlayingId(m.id); setIsPaused(false); };
-        utterance.onend = () => { setPlayingId(null); setIsPaused(false); };
+        utterance.onstart = () => setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
+        utterance.onend = () => setPlaybackState((prev) => (prev?.id === m.id ? null : prev));
         utterance.onerror = async () => {
-          setPlayingId(null);
-          setIsPaused(false);
+          setPlaybackState(null);
           await playFromBackend(m);
         };
         window.speechSynthesis.speak(utterance);
-        setPlayingId(m.id);
+        setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
       };
 
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        speakWithVoice(voices);
-      } else {
-        // Voices not loaded yet (async in Chrome) — wait for voiceschanged
-        const onVoicesChanged = () => {
-          window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
-          speakWithVoice(window.speechSynthesis.getVoices());
-        };
-        window.speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
-        // Safety timeout: if voiceschanged never fires (Firefox), fall back to backend
-        setTimeout(() => {
-          window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
-          const v = window.speechSynthesis.getVoices();
-          if (v.length > 0) speakWithVoice(v);
-          else playFromBackend(m);
-        }, 1500);
-      }
+      speakWithVoice();
       return;
     }
 
-    // Fallback: backend edge-tts (Microsoft Neural — always female)
     playFromBackend(m);
   };
 
   const handleVoiceChange = (idx: number, m: Msg) => {
-    setSelectedVoiceIdx(idx);
-    if (playingId === m.id) {
+    setVoicePrefs((prev) => ({ ...prev, [m.id]: idx }));
+    if (playbackState?.id === m.id) {
       window.speechSynthesis?.cancel();
-      audioRef.current?.pause();
-      setPlayingId(null);
-      setIsPaused(false);
-      // Restart speech immediately with new voice
+      setPlaybackState(null);
       setTimeout(() => {
         const femaleVoice = femaleVoices[idx];
         if (!femaleVoice) return;
@@ -425,16 +355,20 @@ const Chat = () => {
         utterance.rate = 1.05;
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
-        utterance.onstart = () => { setPlayingId(m.id); setIsPaused(false); };
-        utterance.onend = () => { setPlayingId(null); setIsPaused(false); };
+        utterance.onstart = () => setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
+        utterance.onend = () => setPlaybackState((prev) => (prev?.id === m.id ? null : prev));
+        utterance.onerror = async () => {
+          setPlaybackState(null);
+          await playFromBackend(m);
+        };
         window.speechSynthesis?.speak(utterance);
-        setPlayingId(m.id);
+        setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
       }, 50);
     }
   };
 
   const playFromBackend = async (m: Msg) => {
-    setLoadingAudioId(m.id);
+    setPlaybackState({ id: m.id, engine: "backend", state: "loading" });
     try {
       const res = await fetch("/api/tts", {
         method: "POST",
@@ -442,20 +376,25 @@ const Chat = () => {
         body: JSON.stringify({ text: m.text, lang: lang }),
       });
       if (!res.ok) throw new Error("TTS failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      if (!audioRef.current) audioRef.current = new Audio();
-      audioRef.current.src = url;
-      audioRef.current.onended = () => { setPlayingId(null); setIsPaused(false); };
-      setLoadingAudioId(null);
-      setPlayingId(m.id);
-      setIsPaused(false);
-      try { await audioRef.current.play(); } catch { setPlayingId(null); setIsPaused(false); }
+      
+      setPlaybackState((prev) => {
+        if (prev?.id !== m.id || prev.state !== "loading") return prev;
+        
+        res.blob().then((blob) => {
+          const url = URL.createObjectURL(blob);
+          if (!audioRef.current) audioRef.current = new Audio();
+          audioRef.current.src = url;
+          audioRef.current.onended = () => setPlaybackState((p) => (p?.id === m.id ? null : p));
+          audioRef.current.play().then(() => {
+            setPlaybackState((p) => (p?.id === m.id ? { id: m.id, engine: "backend", state: "playing" } : p));
+          }).catch(() => setPlaybackState((p) => (p?.id === m.id ? null : p)));
+        });
+        
+        return prev;
+      });
     } catch (e) {
       console.error(e);
-      setLoadingAudioId(null);
-      setPlayingId(null);
-      setIsPaused(false);
+      setPlaybackState((prev) => (prev?.id === m.id ? null : prev));
     }
   };
 
@@ -475,6 +414,8 @@ const Chat = () => {
           id: crypto.randomUUID(),
           role: "ai",
           text: data.buddy_text || data.translated || "Sorry, I couldn't understand.",
+          originalUserText: userText,
+          queryInTargetLang: data.query_in_target_lang,
           topic: "legal",
           lawChip: data.legal_keys?.[0] || undefined,
           followups: data.followups || [],
@@ -538,9 +479,9 @@ const Chat = () => {
   };
 
   const suggestions = [
-    { label: t("tenantRights"), q: "What are my rights as a tenant?" },
-    { label: t("fileRti"), q: "How do I file an RTI application?" },
-    { label: t("consumerComplaint"), q: "How do I file a consumer complaint?" },
+    { label: t("tenantRights"), q: t("tenantRightsQuery") },
+    { label: t("fileRti"), q: t("fileRtiQuery") },
+    { label: t("consumerComplaint"), q: t("consumerComplaintQuery") },
   ];
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -550,7 +491,7 @@ const Chat = () => {
     if (!file) return;
     if (!tryConsume()) return;
 
-    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 ${t("uploading" as any) || "Uploading"}: ${file.name}` }]);
+    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 Uploading: ${file.name}` }]);
     setTyping(true);
 
     const fd = new FormData();
@@ -613,6 +554,17 @@ const Chat = () => {
           <div key={m.id} className={cn("max-w-[85%] animate-scale-in", m.role === "user" ? "ml-auto" : "")}>
             {m.role === "ai" ? (
               <div className="ls-card border-l-4 border-l-primary p-4 text-sm space-y-3">
+                {/* Query Transcript Chip */}
+                {m.queryInTargetLang && m.originalUserText && m.queryInTargetLang.trim() !== m.originalUserText.trim() && (
+                  <div className="flex items-start gap-2 pb-2 mb-2 border-b border-border">
+                    <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide shrink-0 mt-0.5">
+                      {t("queryTranscript")}
+                    </span>
+                    <span className="text-xs text-foreground/80 font-native leading-snug">
+                      {m.queryInTargetLang}
+                    </span>
+                  </div>
+                )}
 
                 {/* Severity badge */}
                 {m.severityLevel && (
@@ -746,21 +698,23 @@ const Chat = () => {
                   <button
                     onClick={() => toggleAudio(m)}
                     className="w-9 h-9 flex items-center justify-center rounded-button border border-border text-foreground tap shrink-0"
-                    title={playingId === m.id ? (isPaused ? "Resume audio" : "Pause audio") : "Play audio"}
-                    disabled={loadingAudioId === m.id}
+                    title={playbackState?.id === m.id ? (playbackState.state === "paused" ? "Resume audio" : "Pause audio") : "Play audio"}
+                    disabled={playbackState?.id === m.id && playbackState.state === "loading"}
                   >
-                    {loadingAudioId === m.id ? (
+                    {playbackState?.id === m.id && playbackState.state === "loading" ? (
                       <div className="w-3.5 h-3.5 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-                    ) : playingId === m.id ? (
-                      isPaused ? <Play size={14} className="text-primary" /> : <Pause size={14} className="text-primary" />
+                    ) : playbackState?.id === m.id && playbackState.state === "playing" ? (
+                      <Pause size={14} className="text-primary" />
+                    ) : playbackState?.id === m.id && playbackState.state === "paused" ? (
+                      <Play size={14} className="text-primary" />
                     ) : (
                       <Volume2 size={14} />
                     )}
                   </button>
 
                   {/* Inline Voice Picker */}
-                  {femaleVoices.length > 0 && (
-                    <div className="flex gap-1.5 ml-1">
+                  {femaleVoices.length > 0 && playbackState?.id === m.id && (
+                    <div className="flex gap-1.5 ml-1 animate-in fade-in zoom-in duration-200">
                       {femaleVoices.map((v, i) => (
                         <button
                           key={v.name}
@@ -768,7 +722,7 @@ const Chat = () => {
                           title={v.name}
                           className={cn(
                             "px-2 py-1 rounded-full text-[9px] font-semibold border transition-all duration-150 tap",
-                            selectedVoiceIdx === i
+                            (voicePrefs[m.id] ?? 0) === i
                               ? "bg-primary text-primary-foreground border-primary shadow-sm"
                               : "bg-card border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
                           )}
@@ -893,8 +847,8 @@ const Chat = () => {
             ) : (
               <button
                 onClick={() => {
-                  const hasSpeechRecognition = !!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition;
-                  hasSpeechRecognition ? stopRecognition() : stopGroqFallback();
+                  const hasSpeechRecognition = !!(window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition || !!(window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
+                  if (hasSpeechRecognition) { stopRecognition(); } else { stopGroqFallback(); }
                 }}
                 className="px-6 py-2.5 rounded-full bg-destructive text-destructive-foreground text-sm font-semibold tap shadow-lg"
               >
