@@ -1,3 +1,20 @@
+import os
+from dotenv import load_dotenv
+from pathlib import Path
+
+_p1 = Path(__file__).resolve().parents[2] / ".env"
+_p2 = Path(__file__).resolve().parents[1] / ".env"
+_p3 = Path.cwd() / ".env"
+if _p1.exists():
+    load_dotenv(dotenv_path=str(_p1))
+elif _p2.exists():
+    load_dotenv(dotenv_path=str(_p2))
+elif _p3.exists():
+    load_dotenv(dotenv_path=str(_p3))
+else:
+    load_dotenv()
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
@@ -9,7 +26,21 @@ from app.services.voice_service import VoiceService
 from app.services.doc_service import DocService
 from app.services.ocr_service import OCRService
 
-app = FastAPI(title="Legal Sarathi 2.0 API")
+orchestrator = None
+voice_service = None
+doc_service = None
+ocr_service = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global orchestrator, voice_service, doc_service, ocr_service
+    orchestrator = Orchestrator()
+    voice_service = VoiceService()
+    doc_service = DocService()
+    ocr_service = OCRService()
+    yield
+
+app = FastAPI(title="Legal Sarathi 2.0 API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,13 +67,10 @@ class TTSRequest(BaseModel):
     text: str
     lang: str = "hi"
 
-orchestrator = Orchestrator()
-voice_service = VoiceService()
-doc_service   = DocService()
-ocr_service   = OCRService()
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "service": "legal-sarathi-2.0"}
 
