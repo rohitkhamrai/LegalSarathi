@@ -118,12 +118,19 @@ class Orchestrator:
         legal_keys = results[0]
         web_context, source_urls = results[1]
 
-        idx = 2
-        rag_chunks_raw, t_rag = (results[idx] if self.rag_service.is_ready else ([], 0.0))
+        _result_idx = 2
+        
         if self.rag_service.is_ready:
-            idx += 1
+            rag_chunks_raw, t_rag = results[_result_idx]
+            _result_idx += 1
+        else:
+            rag_chunks_raw, t_rag = [], 0.0
 
-        gguf_result = results[idx] if self.specialist_service else ""
+        if self.specialist_service:
+            gguf_result = results[_result_idx]
+            _result_idx += 1
+        else:
+            gguf_result = ""
 
         # Fallback web search if seed returned nothing
         if (not web_context.strip() or web_context == "No legal context found.") and legal_keys:
