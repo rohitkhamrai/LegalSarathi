@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/common/Button";
-import { TextField } from "@/components/common/TextField";
-import { useAuth } from "@/contexts/AuthContext";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { INDIAN_STATES, INTEREST_KEYS } from "@/data/onboarding";
-import type { TranslationKey } from "@/i18n/translations";
-import { cn } from "@/lib/utils";
+import { Button } from "@desktop/components/common/Button";
+import { TextField } from "@desktop/components/common/TextField";
+import { useAuth } from "@desktop/contexts/AuthContext";
+import { useLanguage } from "@desktop/contexts/LanguageContext";
+import { INDIAN_STATES, INTEREST_KEYS } from "@desktop/data/onboarding";
+import type { TranslationKey } from "@desktop/i18n/translations";
+import { cn } from "@desktop/lib/utils";
 
 type Step = 1 | 2 | 3;
 
@@ -80,8 +80,8 @@ const OnboardingForm = () => {
   const progressPct = step === 1 ? 33 : step === 2 ? 66 : 100;
 
   return (
-    <div className="min-h-[100dvh] bg-mandala">
-      <div className="max-w-md mx-auto bg-background min-h-[100dvh] flex flex-col">
+    <div className="min-h-screen bg-mandala flex items-center justify-center">
+      <div className="max-w-md mx-auto bg-background min-h-screen flex flex-col">
         <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border flex items-center px-4 h-14">
           <button
             onClick={back}
