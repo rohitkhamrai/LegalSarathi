@@ -1,5 +1,7 @@
 import os
 from dotenv import load_dotenv
+import urllib.parse
+import json
 from pathlib import Path
 
 _p1 = Path(__file__).resolve().parents[2] / ".env"
@@ -44,7 +46,7 @@ app = FastAPI(title="Legal Sarathi 2.0 API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8080", "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:8080", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -136,10 +138,10 @@ async def ocr_query(
 # ── Voice Endpoints ───────────────────────────────────────────────────────────
 
 @app.post("/api/tts")
-def text_to_speech(req: TTSRequest):
+async def text_to_speech(req: TTSRequest):
     """Standalone TTS — convert any text to mp3 in given lang. Used for replay."""
     try:
-        mp3_path = voice_service.synthesize(req.text, lang=req.lang)
+        mp3_path = await voice_service.synthesize(req.text, lang=req.lang)
         return FileResponse(
             mp3_path,
             media_type="audio/mpeg",
@@ -165,14 +167,14 @@ async def voice_query(
         result = await orchestrator.process_query(text=transcribed, lang=lang)
         buddy_text = result.get("buddy_text", "No guidance available.")
 
-        mp3_path = voice_service.synthesize(buddy_text, lang=lang)
+        mp3_path = await voice_service.synthesize(buddy_text, lang=lang)
         return FileResponse(
             mp3_path,
             media_type="audio/mpeg",
             filename="response.mp3",
             headers={
-                "X-Transcription": __import__("urllib.parse").parse.quote(transcribed[:200]),
-                "X-Query-Result": __import__("json").dumps(result, ensure_ascii=True)
+                "X-Transcription": urllib.parse.quote(transcribed[:200]),
+                "X-Query-Result": json.dumps(result, ensure_ascii=True)
             }
         )
     except HTTPException:
