@@ -30,7 +30,7 @@ class GroqService:
         # Fast+high-RPD model for simple extraction tasks
         self.fast_model = "llama-3.1-8b-instant"
         # Best reasoning + multilingual for full legal synthesis
-        self.synthesis_model = "openai/gpt-oss-120b"
+        self.synthesis_model = "llama-3.3-70b-versatile"
 
     async def extract_legal_keys(self, text: str) -> list:
         system_prompt = """
