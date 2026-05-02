@@ -513,7 +513,7 @@ const Chat = () => {
           role: "ai",
           text: data.buddy_text || data.translated || "Document processed.",
           topic: "legal",
-          lawChip: data.law_chip || undefined,
+          lawChip: data.legal_keys?.[0] || undefined,
           followups: data.followups || [],
           ocrExtractedText: data.ocr_extracted_text,
         },
