@@ -295,7 +295,7 @@ class RAGService:
         lines = ["RETRIEVED LEGAL STATUTES (cite by [section_ref] in your answer):"]
         for c in chunks:
             lines.append(f"\n[{c['section_ref']}]")
-            lines.append(c.get("parent_content", c["text"]))
+            lines.append(c.get("parent_content", c.get("text", c.get("content", ""))))
         return "\n".join(lines)
 
     @property
