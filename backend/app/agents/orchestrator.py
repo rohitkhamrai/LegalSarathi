@@ -189,7 +189,13 @@ class Orchestrator:
         total_time = time.time() - start_total
         print(f"[LATENCY] Total: {total_time:.3f}s")
 
-        query_in_target_lang = await self.translator.translate(text, source_lang="auto", target_lang=lang)
+        query_in_target_lang = text
+        if lang not in ("en", "en-IN"):
+            target_lang = "kn" if lang == "tu" else "mr" if lang == "kk" else lang
+            try:
+                query_in_target_lang = await self.translator.translate(text, source_lang="auto", target_lang=target_lang)
+            except Exception as e:
+                print(f"[TRANSLATE ERROR] query target lang failed: {e}")
 
         result = {
             "query":            text,
