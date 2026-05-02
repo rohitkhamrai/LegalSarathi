@@ -40,7 +40,7 @@ class CitationAuditService:
             badge: display string for UI
         """
         retrieved_ids = {c["section_ref"] for c in retrieved_chunks}
-        retrieved_titles = {c["title"].lower() for c in retrieved_chunks}
+        retrieved_titles = {c.get("title", "").lower() for c in retrieved_chunks}
 
         # Extract chunk-ID style citations [BNS_73]
         cited_ids = set(self.CITATION_PATTERN.findall(answer_text))
