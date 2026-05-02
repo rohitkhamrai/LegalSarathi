@@ -98,7 +98,7 @@ class VoiceService:
             print(f"[STT] Groq Whisper error: {e}")
             return ""
 
-    def synthesize(self, text: str, lang: str = "hi") -> str:
+    async def synthesize(self, text: str, lang: str = "hi") -> str:
         """TTS: text → mp3 path via edge-tts (Microsoft Neural voices)."""
         lang_code = lang.split("-")[0].lower()
         voice = EDGE_TTS_VOICES.get(lang_code, "hi-IN-SwaraNeural")
@@ -106,18 +106,8 @@ class VoiceService:
         tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False, prefix="sarathi_tts_")
         tmp.close()
 
-        async def _generate():
-            communicate = edge_tts.Communicate(text=text, voice=voice, rate="+5%", pitch="+0Hz")
-            await communicate.save(tmp.name)
-
-        try:
-            # Run async edge-tts in a new event loop (called from sync context)
-            asyncio.run(_generate())
-        except RuntimeError:
-            # Already inside an event loop (e.g. during testing)
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(_generate())
-            loop.close()
+        communicate = edge_tts.Communicate(text=text, voice=voice, rate="+5%", pitch="+0Hz")
+        await communicate.save(tmp.name)
 
         print(f"[TTS] edge-tts voice={voice}, chars={len(text)}, saved={tmp.name}")
         return tmp.name
