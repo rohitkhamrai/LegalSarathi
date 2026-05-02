@@ -11,7 +11,19 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=str(Path(__file__).resolve().parents[3] / ".env"))
+# Try three candidate paths in order, fall back to CWD
+_p1 = Path(__file__).resolve().parents[3] / ".env"
+_p2 = Path(__file__).resolve().parents[2] / ".env"
+_p3 = Path.cwd() / ".env"
+
+if _p1.exists():
+    load_dotenv(dotenv_path=str(_p1))
+elif _p2.exists():
+    load_dotenv(dotenv_path=str(_p2))
+elif _p3.exists():
+    load_dotenv(dotenv_path=str(_p3))
+else:
+    load_dotenv()
 
 # Try both path resolutions (run from backend/ or root)
 _base = Path(__file__).resolve().parents[1]
