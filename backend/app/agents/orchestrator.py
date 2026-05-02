@@ -189,8 +189,11 @@ class Orchestrator:
         total_time = time.time() - start_total
         print(f"[LATENCY] Total: {total_time:.3f}s")
 
+        query_in_target_lang = await self.translator.translate(text, source_lang="auto", target_lang=lang)
+
         result = {
             "query":            text,
+            "query_in_target_lang": query_in_target_lang,
             "lang":             lang,
             "legal_keys":       legal_keys,
             "gguf_raw":         gguf_result[:800] if gguf_result else "",

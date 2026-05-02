@@ -42,9 +42,9 @@ const Home = () => {
   };
 
   const chipQueries = [
-    { label: t("fileRti"), q: "How do I file an RTI application?" },
-    { label: t("tenantRights"), q: "What are my rights as a tenant?" },
-    { label: t("consumerComplaint"), q: "How do I file a consumer complaint?" },
+    { label: t("fileRti"), q: t("fileRtiQuery") },
+    { label: t("tenantRights"), q: t("tenantRightsQuery") },
+    { label: t("consumerComplaint"), q: t("consumerComplaintQuery") },
   ];
 
   return (

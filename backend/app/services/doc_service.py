@@ -30,7 +30,7 @@ Use simple but formal language. Only output the plain text document, no conversa
 
         try:
             completion = self.groq_service.client.chat.completions.create(
-                model=self.groq_service.model,
+                model=self.groq_service.synthesis_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Situation: {query}"}

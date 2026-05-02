@@ -22,6 +22,8 @@ LANG_NAMES = {
     "ur": "Urdu",
     "or": "Odia",
     "as": "Assamese",
+    "tu": "Tulu",
+    "kk": "Konkani",
 }
 
 class GroqService:
@@ -166,6 +168,7 @@ RULES:
         "hi": "hi", "ta": "ta", "te": "te", "mr": "mr",
         "bn": "bn", "gu": "gu", "kn": "kn", "ml": "ml",
         "pa": "pa", "ur": "ur", "or": "or", "as": "as",
+        "tu": "kn", "kk": "mr",
     }
 
     def _translate_field(self, text: str, target_lang: str) -> str:
@@ -188,10 +191,24 @@ RULES:
         re-translate all text fields to target_lang.
         """
         buddy = data.get("buddy_text", "")
+        
+        # Explicit language detection
+        try:
+            from langdetect import detect
+            detected = detect(buddy)
+            # If explicit detection says it's not English, assume it followed instructions.
+            # (Note: langdetect codes might not exactly match target_lang, so we just ensure it's not 'en')
+            if detected != "en":
+                print(f"[Lang fix] buddy_text detected as '{detected}' (not en), skip re-translate")
+                return data
+        except Exception as e:
+            print(f"[Lang fix] langdetect failed: {e}")
+
+        # Fallback to character set ratio if langdetect fails or says 'en'
         # Count non-ASCII chars — Indic scripts are all non-ASCII
         non_ascii = sum(1 for c in buddy if ord(c) > 127)
         ratio = non_ascii / max(len(buddy), 1)
-        if ratio > 0.25:
+        if ratio > 0.40:
             # Already in Indic script — looks correct
             print(f"[Lang fix] buddy_text looks native ({ratio:.0%} non-ASCII), skip re-translate")
             return data
