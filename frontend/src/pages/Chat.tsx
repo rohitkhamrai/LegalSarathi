@@ -471,7 +471,7 @@ const Chat = () => {
                 {/* Rights with citations */}
                 {m.rights && m.rights.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1.5">⚖️ Your Rights</p>
+                    <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1.5">{t("chatYourRights")}</p>
                     <ul className="space-y-1">
                       {m.rights.map((r, i) => (
                         <li key={i} className="flex gap-2 text-xs">
@@ -486,7 +486,7 @@ const Chat = () => {
                 {/* Action steps */}
                 {m.actionSteps && m.actionSteps.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-widest mb-1.5">📋 Steps to Take</p>
+                    <p className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-widest mb-1.5">{t("chatStepsToTake")}</p>
                     <ol className="space-y-1 list-none">
                       {m.actionSteps.map((s, i) => (
                         <li key={i} className="flex gap-2 text-xs">
@@ -501,7 +501,7 @@ const Chat = () => {
                 {/* Do not do */}
                 {m.doNotDo && m.doNotDo.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-destructive uppercase tracking-widest mb-1.5">🚫 Do NOT Do</p>
+                    <p className="text-[10px] font-bold text-destructive uppercase tracking-widest mb-1.5">{t("chatDoNotDo")}</p>
                     <ul className="space-y-1">
                       {m.doNotDo.map((d, i) => (
                         <li key={i} className="flex gap-2 text-xs text-destructive/80">
@@ -516,7 +516,7 @@ const Chat = () => {
                 {/* Evidence required */}
                 {m.evidenceRequired && m.evidenceRequired.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-yellow-600 dark:text-yellow-400 uppercase tracking-widest mb-1.5">📂 Collect Now</p>
+                    <p className="text-[10px] font-bold text-yellow-600 dark:text-yellow-400 uppercase tracking-widest mb-1.5">{t("chatCollectNow")}</p>
                     <ul className="space-y-1">
                       {m.evidenceRequired.map((e, i) => (
                         <li key={i} className="flex gap-2 text-xs">
@@ -533,7 +533,7 @@ const Chat = () => {
                   <details className="group">
                     <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest cursor-pointer list-none flex items-center gap-1 hover:text-primary transition-colors">
                       <span className="group-open:rotate-180 transition-transform duration-200">▼</span>
-                      View Extracted Text
+                      {t("chatExtractedText")}
                     </summary>
                     <div className="mt-2 p-2 bg-muted/30 rounded-lg text-[11px] font-mono whitespace-pre-wrap border border-border/50 max-h-40 overflow-y-auto">
                       {m.ocrExtractedText}
@@ -546,7 +546,7 @@ const Chat = () => {
                   <details className="group">
                     <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest cursor-pointer list-none flex items-center gap-1 hover:text-primary transition-colors">
                       <span className="group-open:rotate-180 transition-transform duration-200">▼</span>
-                      💡 Know Your Law
+                      {t("chatKnowYourLaw")}
                     </summary>
                     <p className="mt-2 text-xs text-muted-foreground leading-relaxed">{m.awareness}</p>
                   </details>
@@ -557,7 +557,7 @@ const Chat = () => {
                   <details className="group">
                     <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest cursor-pointer list-none flex items-center gap-1 hover:text-primary transition-colors">
                       <span className="group-open:rotate-180 transition-transform duration-200">▼</span>
-                      {m.citationBadge || "📚"} Sources ({m.ragChunksUsed.length})
+                      {m.citationBadge || "📚"} {t("chatSources")} ({m.ragChunksUsed.length})
                     </summary>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {m.ragChunksUsed.map((ref) => (
@@ -592,7 +592,7 @@ const Chat = () => {
                     onClick={() => navigate("/lawyers")}
                     className="h-9 text-xs px-3 rounded-button border border-border text-foreground tap"
                   >
-                    Consult Lawyer
+                    {t("chatConsultLawyer")}
                   </button>
                 </div>
 
@@ -680,7 +680,7 @@ const Chat = () => {
           </div>
 
           <p className="text-sm font-medium mb-1">
-            {isRecording ? "Listening…" : "Tap mic to speak"}
+            {isRecording ? t("listening") : t("chatTapToSpeak")}
           </p>
 
           {/* Live transcript display */}
@@ -697,7 +697,7 @@ const Chat = () => {
                 onClick={startVoiceRecognition}
                 className="px-6 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-semibold tap shadow-lg"
               >
-                <Mic size={16} className="inline mr-2" />Start Recording
+                <Mic size={16} className="inline mr-2" />{t("chatStartRecording")}
               </button>
             ) : (
               <button
@@ -707,7 +707,7 @@ const Chat = () => {
                 }}
                 className="px-6 py-2.5 rounded-full bg-destructive text-destructive-foreground text-sm font-semibold tap shadow-lg"
               >
-                <Square size={14} className="inline mr-2" />Stop
+                <Square size={14} className="inline mr-2" />{t("chatStop")}
               </button>
             )}
             {voiceTranscript && !isRecording && (
@@ -715,7 +715,7 @@ const Chat = () => {
                 onClick={() => sendVoiceTranscript(voiceTranscript)}
                 className="px-6 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-semibold tap shadow-lg"
               >
-                <Send size={14} className="inline mr-2" />Send
+                <Send size={14} className="inline mr-2" />{t("chatSend")}
               </button>
             )}
           </div>
@@ -724,7 +724,7 @@ const Chat = () => {
             onClick={() => { stopRecognition(); stopGroqFallback(); setVoice(false); setVoiceTranscript(""); }}
             className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-card/20 text-sm tap"
           >
-            <X size={16} /> Cancel
+            <X size={16} /> {t("cancel")}
           </button>
         </div>
       )}
