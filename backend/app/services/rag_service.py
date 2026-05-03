@@ -185,7 +185,7 @@ class RAGService:
         elapsed = time.time() - t
         print(
             f"[RAG] Hybrid: dense={len(dense_results)} bm25={len(bm25_results)} "
-            f"→ merged={len(merged)} in {elapsed:.3f}s"
+            f"-> merged={len(merged)} in {elapsed:.3f}s"
         )
         return merged, elapsed
 

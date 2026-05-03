@@ -76,7 +76,7 @@ class Orchestrator:
         if not self.rag_service.is_ready:
             print("[RAG] Not ready — run ingest_corpus.py to build index")
 
-    async def process_query(self, text: str, lang: str = "hi", pinned_history: list = None):
+    async def process_query(self, text: str, lang: str = "hi", pinned_history: list = None, conversation_history: list = None):
         if not text or not text.strip():
             from fastapi import HTTPException
             raise HTTPException(status_code=422, detail="Query cannot be empty.")
@@ -89,12 +89,15 @@ class Orchestrator:
             text = f"CONTEXT FROM PINNED SESSION:\n{pinned_summary}\n\nUSER CURRENT QUERY: {text}"
 
 
-        # ── LRU Cache check ───────────────────────────────────────────────────
+        # ── LRU Cache check (skip for multi-turn — context-dependent) ─────────
         cache_key = _cache_key(text, lang)
-        cached = _cache_get(cache_key)
-        if cached is not None:
-            print(f"[CACHE HIT] key={cache_key}")
-            return cached
+        if not conversation_history:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                print(f"[CACHE HIT] key={cache_key}")
+                return cached
+        else:
+            print(f"[CACHE SKIP] conversation_history present ({len(conversation_history)} turns)")
 
         start_total = time.time()
 
@@ -172,6 +175,7 @@ class Orchestrator:
             target_lang=lang,
             specialist_opinion=gguf_result,
             rag_context=rag_context,
+            conversation_history=conversation_history or [],
         )
         t_synthesis = time.time() - t0
         print(f"[LATENCY] Groq Synthesis: {t_synthesis:.3f}s")
@@ -233,8 +237,9 @@ class Orchestrator:
             },
         }
 
-        # Store in LRU cache
-        _cache_set(cache_key, result)
+        # Store in LRU cache (only for single-turn queries)
+        if not conversation_history:
+            _cache_set(cache_key, result)
         return result
 
     # ── Document Chat ─────────────────────────────────────────────────────────

@@ -47,6 +47,7 @@ const Chat = () => {
   const [voice, setVoice] = useState(false);
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [chatHistory, setChatHistory] = useState<{role: string; content: string}[]>([]);
   const [typing, setTyping] = useState(false);
   const [urgent, setUrgent] = useState(false);
   // Tracks the OCR-extracted text of the currently active document.
@@ -473,16 +474,21 @@ const Chat = () => {
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: userText, language: lang })
+        body: JSON.stringify({
+          query: userText,
+          language: lang,
+          conversation_history: chatHistory.slice(-6),
+        })
       });
       if (!res.ok) throw new Error("API failed");
       const data = await res.json();
+      const aiText = data.buddy_text || data.translated || "Sorry, I couldn't understand.";
       setMsgs((m) => [
         ...m,
         {
           id: crypto.randomUUID(),
           role: "ai",
-          text: data.buddy_text || data.translated || "Sorry, I couldn't understand.",
+          text: aiText,
           originalUserText: userText,
           queryInTargetLang: data.query_in_target_lang,
           topic: "legal",
@@ -499,6 +505,12 @@ const Chat = () => {
           citationBadge: data.citation_badge,
         },
       ]);
+      // Keep a rolling window of the last 6 turns for context chaining
+      setChatHistory((h) => [
+        ...h,
+        { role: "user", content: userText },
+        { role: "assistant", content: aiText },
+      ].slice(-12)); // 12 entries = 6 user+assistant pairs
     } catch (err) {
       setMsgs((m) => [
         ...m,

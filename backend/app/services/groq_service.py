@@ -73,7 +73,8 @@ Output: Warrantless Arrest, BNS Section 303, Right to be informed, Petty Theft, 
         web_context: str,
         target_lang: str = "hi",
         specialist_opinion: str = "",
-        rag_context: str = ""
+        rag_context: str = "",
+        conversation_history: list = [],
     ) -> dict:
         """
         Core buddy synthesis. Returns structured JSON with situation summary,
@@ -131,12 +132,19 @@ RULES:
 - evidence_required must list physical docs to gather immediately"""
 
         try:
+            # Build multi-turn messages: system + prior conversation + current query
+            messages = [{"role": "system", "content": system_prompt}]
+            for turn in conversation_history[-6:]:  # last 6 turns max
+                role = turn.get("role", "user")
+                content = turn.get("content", "")
+                if role in ("user", "assistant") and content:
+                    # Truncate long prior turns to keep context window manageable
+                    messages.append({"role": role, "content": content[:400]})
+            messages.append({"role": "user", "content": f"Situation: {english_text}"})
+
             completion = self.client.chat.completions.create(
                 model=self.synthesis_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Situation: {english_text}"}
-                ],
+                messages=messages,
                 temperature=0.3,
                 max_tokens=2000,
             )
