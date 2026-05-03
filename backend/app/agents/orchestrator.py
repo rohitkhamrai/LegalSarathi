@@ -152,7 +152,7 @@ class Orchestrator:
 
         # ── 4. Format RAG for Groq ────────────────────────────────────────────
         rag_context = self.rag_service.format_for_prompt(rag_chunks) if rag_chunks else ""
-        print(f"[RAG] Top sections: {[c['section_ref'] for c in rag_chunks[:3]]}")
+        print(f"[RAG] Top sections: {[c.get('section_ref', 'UNKNOWN') for c in rag_chunks[:3]]}")
         print(f"[GGUF API] Result chars: {len(gguf_result)}")
 
         # ── 5. Groq synthesis ─────────────────────────────────────────────────
@@ -203,7 +203,7 @@ class Orchestrator:
             "lang":             lang,
             "legal_keys":       legal_keys,
             "gguf_raw":         gguf_result[:800] if gguf_result else "",
-            "rag_chunks_used":  [c["section_ref"] for c in rag_chunks],
+            "rag_chunks_used":  [c.get("section_ref", "UNKNOWN") for c in rag_chunks],
             "citation_score":   citation_result["citation_score"],
             "citation_badge":   citation_result["badge"],
             "situation_summary": buddy_data.get("situation_summary", ""),
