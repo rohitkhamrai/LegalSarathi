@@ -44,22 +44,23 @@ class RerankerService:
         Returns top_k chunks sorted by re-ranking score descending.
         Falls back to original order if model unavailable.
         """
-        if not chunks:
-            return chunks
-
-        model = _get_model()
-        if model is None or len(chunks) <= 1:
+        valid_chunks = [c for c in chunks if c.get("text", "").strip()]
+        if not valid_chunks:
             return chunks[:top_k]
 
+        model = _get_model()
+        if model is None or len(valid_chunks) <= 1:
+            return valid_chunks[:top_k]
+
         try:
-            pairs = [(query, c.get("text", "")[:512]) for c in chunks]
+            pairs = [(query, c.get("text", "")[:512]) for c in valid_chunks]
             scores = model.predict(pairs)
 
             # Attach rerank score and sort
-            for chunk, score in zip(chunks, scores):
+            for chunk, score in zip(valid_chunks, scores):
                 chunk["rerank_score"] = float(score)
 
-            reranked = sorted(chunks, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+            reranked = sorted(valid_chunks, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
             top = reranked[:top_k]
             print(
                 f"[RERANK] {len(chunks)} → {len(top)} chunks. "
