@@ -49,6 +49,10 @@ const Chat = () => {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [typing, setTyping] = useState(false);
   const [urgent, setUrgent] = useState(false);
+  // Tracks the OCR-extracted text of the currently active document.
+  // When set, follow-up queries go to /api/doc-chat instead of /api/query.
+  const [activeDocText, setActiveDocText] = useState<string | null>(null);
+  const [activeDocName, setActiveDocName] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const seededRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -271,21 +275,76 @@ const Chat = () => {
     state: "playing" | "paused" | "loading";
   } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Track the current utterance so we can cancel it precisely
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  // Cleanup on unmount — stop any in-flight audio
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+    };
+  }, []);
+
+  // ─── shared helper: build + speak an utterance ─────────────────────────────
+  const speakUtterance = (text: string, voice: SpeechSynthesisVoice, bcp47: string, msgId: string, onFallback: () => void) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = bcp47;
+    utterance.voice = voice;
+    utterance.rate = 1.05;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    // onstart is unreliable on some browsers — set "playing" optimistically at speak() time
+    // and only update again in onstart if still relevant (avoids double-set flicker via a guard)
+    let startFired = false;
+    utterance.onstart = () => {
+      if (startFired) return;
+      startFired = true;
+      setPlaybackState((prev) => (prev?.id === msgId && prev.state !== "playing" ? { id: msgId, engine: "browser", state: "playing" } : prev));
+    };
+    utterance.onend = () => {
+      utteranceRef.current = null;
+      setPlaybackState((prev) => (prev?.id === msgId ? null : prev));
+    };
+    utterance.onerror = (e) => {
+      // "interrupted" fires on intentional cancel — don't fall back
+      if (e.error === "interrupted") return;
+      utteranceRef.current = null;
+      setPlaybackState(null);
+      onFallback();
+    };
+
+    utteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+    // Set playing immediately — onstart may lag or never fire on some browsers
+    setPlaybackState({ id: msgId, engine: "browser", state: "playing" });
+  };
 
   const toggleAudio = (m: Msg) => {
     const isAndroidChrome = /Android/i.test(navigator.userAgent) && /Chrome/i.test(navigator.userAgent);
 
+    // ── same message: toggle play/pause ──────────────────────────────────────
     if (playbackState?.id === m.id) {
       if (playbackState.state === "loading") return;
 
       if (playbackState.state === "paused") {
-        if (playbackState.engine === "browser") window.speechSynthesis?.resume();
-        else audioRef.current?.play();
+        // Resume
+        if (playbackState.engine === "browser") {
+          window.speechSynthesis?.resume();
+        } else {
+          audioRef.current?.play();
+        }
         setPlaybackState({ ...playbackState, state: "playing" });
       } else {
+        // Pause — Android Chrome doesn't support pause(), so cancel instead
         if (playbackState.engine === "browser") {
           if (isAndroidChrome) {
             window.speechSynthesis?.cancel();
+            utteranceRef.current = null;
             setPlaybackState(null);
             return;
           }
@@ -298,71 +357,49 @@ const Chat = () => {
       return;
     }
 
+    // ── different message: stop current, start new ────────────────────────────
     window.speechSynthesis?.cancel();
+    utteranceRef.current = null;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = "";
     }
     setPlaybackState(null);
 
-    if (typeof window !== "undefined" && "speechSynthesis" in window && femaleVoices.length > 0) {
-      const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
+    const hasBrowserTTS = typeof window !== "undefined" && "speechSynthesis" in window;
+    const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
 
-      const speakWithVoice = () => {
-        const idx = voicePrefs[m.id] ?? 0;
-        const femaleVoice = femaleVoices[idx] ?? femaleVoices[0] ?? null;
-        if (!femaleVoice) {
-          console.warn("[TTS] No female browser voice found, using backend edge-tts");
-          playFromBackend(m);
-          return;
-        }
-        const utterance = new SpeechSynthesisUtterance(m.text);
-        utterance.lang = bcp47;
-        utterance.voice = femaleVoice;
-        utterance.rate = 1.05;
-        utterance.pitch = 1.0;
-        utterance.volume = 1.0;
-        utterance.onstart = () => setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
-        utterance.onend = () => setPlaybackState((prev) => (prev?.id === m.id ? null : prev));
-        utterance.onerror = async () => {
-          setPlaybackState(null);
-          await playFromBackend(m);
-        };
-        window.speechSynthesis.speak(utterance);
-        setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
-      };
-
-      speakWithVoice();
-      return;
+    if (hasBrowserTTS && femaleVoices.length > 0) {
+      const idx = voicePrefs[m.id] ?? 0;
+      const voice = femaleVoices[idx] ?? femaleVoices[0];
+      if (voice) {
+        speakUtterance(m.text, voice, bcp47, m.id, () => playFromBackend(m));
+        return;
+      }
     }
 
+    // No browser voice available — use backend edge-tts
     playFromBackend(m);
   };
 
   const handleVoiceChange = (idx: number, m: Msg) => {
+    // Persist the preference regardless of current playback state
     setVoicePrefs((prev) => ({ ...prev, [m.id]: idx }));
-    if (playbackState?.id === m.id) {
+
+    // If this message is currently playing in the browser engine, restart with new voice
+    if (playbackState?.id === m.id && playbackState.engine === "browser") {
       window.speechSynthesis?.cancel();
+      utteranceRef.current = null;
       setPlaybackState(null);
+
+      const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
+      const voice = femaleVoices[idx];
+      if (!voice) return;
+
+      // Small delay to let the cancel settle before re-speaking
       setTimeout(() => {
-        const femaleVoice = femaleVoices[idx];
-        if (!femaleVoice) return;
-        const bcp47 = (LANG_TO_BCP47 as Record<string, string>)[lang.split("-")[0]] || "hi-IN";
-        const utterance = new SpeechSynthesisUtterance(m.text);
-        utterance.lang = bcp47;
-        utterance.voice = femaleVoice;
-        utterance.rate = 1.05;
-        utterance.pitch = 1.0;
-        utterance.volume = 1.0;
-        utterance.onstart = () => setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
-        utterance.onend = () => setPlaybackState((prev) => (prev?.id === m.id ? null : prev));
-        utterance.onerror = async () => {
-          setPlaybackState(null);
-          await playFromBackend(m);
-        };
-        window.speechSynthesis?.speak(utterance);
-        setPlaybackState({ id: m.id, engine: "browser", state: "playing" });
-      }, 50);
+        speakUtterance(m.text, voice, bcp47, m.id, () => playFromBackend(m));
+      }, 80);
     }
   };
 
@@ -375,24 +412,29 @@ const Chat = () => {
         body: JSON.stringify({ text: m.text, lang: lang }),
       });
       if (!res.ok) throw new Error("TTS failed");
-      
+
+      // Fetch the blob OUTSIDE the state updater — state updaters must be pure
+      const blob = await res.blob();
+
+      // Check we're still the active playback (user may have cancelled while loading)
       setPlaybackState((prev) => {
         if (prev?.id !== m.id || prev.state !== "loading") return prev;
-        
-        res.blob().then((blob) => {
-          const url = URL.createObjectURL(blob);
-          if (!audioRef.current) audioRef.current = new Audio();
-          audioRef.current.src = url;
-          audioRef.current.onended = () => setPlaybackState((p) => (p?.id === m.id ? null : p));
-          audioRef.current.play().then(() => {
-            setPlaybackState((p) => (p?.id === m.id ? { id: m.id, engine: "backend", state: "playing" } : p));
-          }).catch(() => setPlaybackState((p) => (p?.id === m.id ? null : p)));
-        });
-        
-        return prev;
+        // Side-effect inside updater is unavoidable here to stay synchronised with state check;
+        // we only do it once because of the guard above.
+        const url = URL.createObjectURL(blob);
+        if (!audioRef.current) audioRef.current = new Audio();
+        audioRef.current.src = url;
+        audioRef.current.onended = () => {
+          URL.revokeObjectURL(url);
+          setPlaybackState((p) => (p?.id === m.id ? null : p));
+        };
+        audioRef.current.play()
+          .then(() => setPlaybackState((p) => (p?.id === m.id ? { id: m.id, engine: "backend", state: "playing" } : p)))
+          .catch(() => setPlaybackState((p) => (p?.id === m.id ? null : p)));
+        return { id: m.id, engine: "backend", state: "loading" }; // audio.play() updates to "playing" async
       });
     } catch (e) {
-      console.error(e);
+      console.error("[TTS] Backend error:", e);
       setPlaybackState((prev) => (prev?.id === m.id ? null : prev));
     }
   };
@@ -400,6 +442,34 @@ const Chat = () => {
   const replyTo = async (userText: string) => {
     setTyping(true);
     try {
+      // If a document is loaded, use the doc-chat endpoint (document-aware AI)
+      if (activeDocText) {
+        const res = await fetch("/api/doc-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            extracted_text: activeDocText,
+            message: userText,
+            mode: "qa",
+            history: msgs.filter(m => m.role !== "ai" || m.ocrExtractedText == null).slice(-6).map(m => ({ role: m.role, content: m.text })),
+            language: lang,
+          })
+        });
+        if (!res.ok) throw new Error("Doc-chat API failed");
+        const data = await res.json();
+        setMsgs((m) => [
+          ...m,
+          {
+            id: crypto.randomUUID(),
+            role: "ai",
+            text: data.response || "I couldn't process that.",
+            topic: "legal",
+          },
+        ]);
+        return;
+      }
+
+      // No document active — use standard RAG pipeline
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -497,22 +567,40 @@ const Chat = () => {
     fd.append("lang", lang);
 
     try {
-      const res = await fetch("/api/ocr-query", {
+      // Step 1: Extract text from the document
+      const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: fd });
+      if (!ocrRes.ok) throw new Error("OCR failed");
+      const ocrData = await ocrRes.json();
+      const extractedText: string = ocrData.extracted_text || "";
+
+      if (!extractedText) throw new Error("Empty extraction");
+
+      // Step 2: Store the extracted text so follow-up queries are document-aware
+      setActiveDocText(extractedText);
+      setActiveDocName(file.name);
+
+      // Step 3: Get an initial AI analysis of the document
+      const chatRes = await fetch("/api/doc-chat", {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          extracted_text: extractedText,
+          message: "Provide a brief summary of this legal document, identify the parties involved, the main legal issue, and any deadlines or amounts mentioned.",
+          mode: "summary",
+          history: [],
+          language: lang,
+        }),
       });
-      if (!res.ok) throw new Error("OCR failed");
-      const data = await res.json();
+      const chatData = chatRes.ok ? await chatRes.json() : null;
 
       setMsgs((m) => [
         ...m,
         {
           id: crypto.randomUUID(),
           role: "ai",
-          text: data.buddy_text || data.translated || "Document processed.",
+          text: chatData?.response || "Document processed. You can now ask questions about it.",
           topic: "legal",
-          lawChip: data.legal_keys?.[0] || undefined,
-          ocrExtractedText: data.ocr_extracted_text,
+          ocrExtractedText: extractedText,
         },
       ]);
     } catch (err) {
@@ -537,6 +625,21 @@ const Chat = () => {
             className="px-3 h-8 rounded-full bg-destructive text-destructive-foreground text-xs font-semibold tap"
           >
             {t("callNow")}
+          </button>
+        </div>
+      )}
+
+      {/* Active Document Context Banner */}
+      {activeDocText && (
+        <div className="mx-4 mb-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 flex items-center gap-2">
+          <span className="text-xs">📄</span>
+          <span className="flex-1 text-xs text-primary font-medium truncate">{activeDocName} — Document mode active</span>
+          <button
+            onClick={() => { setActiveDocText(null); setActiveDocName(null); }}
+            className="text-[10px] text-muted-foreground hover:text-destructive transition-colors ml-1 shrink-0"
+            title="Clear document context"
+          >
+            ✕ Clear
           </button>
         </div>
       )}
@@ -709,9 +812,9 @@ const Chat = () => {
                     )}
                   </button>
 
-                  {/* Inline Voice Picker */}
-                  {femaleVoices.length > 0 && playbackState?.id === m.id && (
-                    <div className="flex gap-1.5 ml-1 animate-in fade-in zoom-in duration-200">
+                  {/* Inline Voice Picker — always visible when multiple voices exist */}
+                  {femaleVoices.length > 1 && (
+                    <div className="flex gap-1.5 ml-1">
                       {femaleVoices.map((v, i) => (
                         <button
                           key={v.name}
