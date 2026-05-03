@@ -27,11 +27,14 @@ from app.services.pdf_service import PDFService
 from app.services.voice_service import VoiceService
 from app.services.doc_service import DocService
 from app.services.ocr_service import OCRService
+from app.services.document_generation_service import DocumentGenerationService
+from jinja2 import TemplateNotFound
 
 orchestrator = None
 voice_service = None
 doc_service = None
 ocr_service = None
+document_generation_service = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,6 +58,12 @@ async def lifespan(app: FastAPI):
         ocr_service = OCRService()
     except Exception as e:
         print(f"[STARTUP ERROR] OCRService failed to initialize: {e}")
+
+    try:
+        document_generation_service = DocumentGenerationService()
+        print("[STARTUP] DocumentGenerationService initialized successfully")
+    except Exception as e:
+        print(f"[STARTUP ERROR] DocumentGenerationService failed to initialize: {e}")
     yield
 
 app = FastAPI(title="Legal Sarathi 2.0 API", lifespan=lifespan)
@@ -70,6 +79,7 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     query: str
     language: str = "hi"
+    pinned_history: list = []   # optional: messages from pinned session
 
 class PDFRequest(BaseModel):
     guidance: str
@@ -84,6 +94,25 @@ class TTSRequest(BaseModel):
     text: str
     lang: str = "hi"
 
+class DocChatRequest(BaseModel):
+    doc_id: str
+    extracted_text: str
+    message: str
+    mode: str = "qa"           # summary|qa|clause_extract|translate|draft_reply
+    history: list = []         # previous doc_chat_messages [{role, content}]
+    language: str = "hi"
+
+class DocumentGenerationRequest(BaseModel):
+    """Request model for document generation endpoints."""
+    doc_type: str  # e.g., "rti_application", "consumer_complaint"
+    language: str = "english"  # Language variant of template
+    data: dict  # Form data with template variables
+
+class DocumentListResponse(BaseModel):
+    """Response model for list of available documents."""
+    available_documents: dict
+    message: str = "Available document types and languages"
+
 
 
 @app.get("/health")
@@ -96,7 +125,29 @@ async def health_check():
 async def process_legal_query(req: QueryRequest):
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator service is still initializing or failed to load.")
-    return await orchestrator.process_query(text=req.query, lang=req.language)
+    return await orchestrator.process_query(
+        text=req.query,
+        lang=req.language,
+        pinned_history=req.pinned_history if req.pinned_history else None,
+    )
+
+
+@app.post("/api/doc-chat")
+async def doc_chat(req: DocChatRequest):
+    """Document-specific chat. Bypasses RAG — extracted_text is the context."""
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator service unavailable")
+    try:
+        result = await orchestrator.process_doc_chat(
+            doc_text=req.extracted_text,
+            message=req.message,
+            mode=req.mode,
+            history=req.history,
+            lang=req.language,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── OCR Endpoints ─────────────────────────────────────────────────────────────
@@ -242,6 +293,67 @@ async def generate_draft_pdf(req: DocRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Template Document Generation Endpoints ─────────────────────────────────────
+
+@app.get("/api/documents/available")
+async def get_available_documents():
+    """Get list of all available document types and their language variants."""
+    if not document_generation_service:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    try:
+        available = document_generation_service.get_available_templates()
+        return {"available_documents": available, "message": "Success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/documents/{doc_type}/fields")
+async def get_document_fields(doc_type: str, language: str = "english"):
+    """Get required form fields for a specific document type."""
+    if not document_generation_service:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    try:
+        if not document_generation_service.validate_document_type(doc_type):
+            raise HTTPException(status_code=404, detail="Document type not found")
+        fields = document_generation_service.get_required_fields(doc_type, language)
+        info = document_generation_service.get_document_info(doc_type)
+        return {"doc_type": doc_type, "language": language, "required_fields": fields, "document_info": info}
+    except HTTPException: raise
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/documents/render")
+async def render_document(req: DocumentGenerationRequest):
+    """Render a legal document template with the provided data (HTML preview)."""
+    if not document_generation_service:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    try:
+        if not document_generation_service.validate_document_type(req.doc_type):
+            raise HTTPException(status_code=400, detail="Invalid doc_type")
+        html = document_generation_service.render_document(req.doc_type, req.language, req.data)
+        return {"status": "success", "html": html}
+    except TemplateNotFound: raise HTTPException(status_code=404, detail="Template not found")
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/documents/generate-pdf")
+async def generate_template_pdf(req: DocumentGenerationRequest):
+    """Render a document template and convert it to PDF."""
+    if not document_generation_service:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    try:
+        html = document_generation_service.render_document(req.doc_type, req.language, req.data)
+        pdf_buffer = await PDFService.generate_draft(html, f"{req.doc_type} - {req.language}")
+        filename = f"{req.doc_type}_{req.language}.pdf"
+        return StreamingResponse(
+            iter([pdf_buffer.getvalue()]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
 
 
 if __name__ == "__main__":

@@ -244,3 +244,62 @@ RULES:
             }
         }
         return fallbacks.get(lang, fallbacks["en"])
+
+    # ── Document Chat ─────────────────────────────────────────────────────────
+
+    # Mode-specific instructions for document chat
+    _DOC_MODE_PROMPTS = {
+        "summary":        "Provide a structured summary: document type, parties involved, key dates, obligations, and the user's rights.",
+        "qa":             "Answer the user's question using ONLY the provided document text. If the answer is not found in the document, explicitly say so.",
+        "clause_extract": "List all clauses that affect the user's rights or obligations. Be specific and quote the exact clause text.",
+        "translate":      "Translate the full document content preserving legal meaning. Do not add commentary.",
+        "draft_reply":    "Draft a formal legal reply based on the document content and the user's described intent.",
+    }
+
+    async def doc_chat_response(
+        self,
+        doc_context: str,
+        message: str,
+        mode: str,
+        history: str,
+        target_lang: str,
+    ) -> str:
+        """
+        Generate a document-specific AI response.
+        Bypasses RAG — the extracted document text is the sole context.
+        """
+        lang_name = LANG_NAMES.get(target_lang, "English")
+        mode_instruction = self._DOC_MODE_PROMPTS.get(mode, self._DOC_MODE_PROMPTS["qa"])
+
+        system_prompt = f"""You are a legal document assistant for Indian law. You have been given a document.
+
+Task: {mode_instruction}
+
+RULES:
+- Base your response ONLY on the provided document
+- Respond in {lang_name}
+- Be precise and helpful to a layperson
+- If translating: translate only, do not add commentary
+- If the document is unclear or irrelevant to the question, say so honestly"""
+
+        user_content = (
+            f"DOCUMENT:\n{doc_context}\n\n"
+            f"CONVERSATION HISTORY:\n{history}\n\n"
+            f"USER: {message}"
+        )
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.synthesis_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_content},
+                ],
+                temperature=0.2,
+                max_tokens=1500,
+            )
+            return completion.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[GroqService] doc_chat_response error: {e}")
+            return f"I was unable to process the document at this time. Please try again. (Error: {e})"
+

@@ -46,7 +46,7 @@ def _get_paddle_ocr(lang: str):
 
     if paddle_lang not in _ocrs:
         print(f"[OCR] Loading PaddleOCR for lang='{paddle_lang}' (first-time, may take a while)")
-        _ocrs[paddle_lang] = PaddleOCR(use_angle_cls=True, lang=paddle_lang, use_gpu=False, show_log=False)
+        _ocrs[paddle_lang] = PaddleOCR(use_angle_cls=True, lang=paddle_lang, enable_mkldnn=False)
         print(f"[OCR] PaddleOCR ready for lang='{paddle_lang}'.")
 
     return _ocrs[paddle_lang]
@@ -87,13 +87,27 @@ class OCRService:
             img_np = np.array(img)[:, :, ::-1]  # Convert RGB to BGR for PaddleOCR
 
             ocr = _get_paddle_ocr(lang)
-            results = ocr.ocr(img_np, cls=True)
+            try:
+                results = ocr.predict(img_np)
+            except AttributeError:
+                results = ocr.ocr(img_np, cls=True)
 
-            if not results or not results[0]:
+            if hasattr(results, "__iter__"):
+                results = list(results)
+
+            if not results:
                 return ""
 
-            # results[0] is a list of [box, (text, confidence)]
-            text_lines = [line[1][0] for line in results[0] if line and len(line) > 1 and len(line[1]) > 0]
+            text_lines = []
+            # Handle new PaddleX 3.0 format
+            if isinstance(results[0], dict) and "rec_texts" in results[0]:
+                text_lines = results[0]["rec_texts"]
+            # Handle old PaddleOCR format
+            elif isinstance(results[0], list):
+                for line in results[0]:
+                    if line and len(line) > 1 and len(line[1]) > 0:
+                        text_lines.append(line[1][0])
+            
             text = "\n".join(text_lines).strip()
             
             print(f"[OCR] Extracted {len(text)} chars from image (lang={lang})")
@@ -113,12 +127,25 @@ class OCRService:
 
             for i, img in enumerate(images):
                 img_np = np.array(img.convert("RGB"))[:, :, ::-1]  # Convert RGB to BGR
-                results = ocr.ocr(img_np, cls=True)
+                try:
+                    results = ocr.predict(img_np)
+                except AttributeError:
+                    results = ocr.ocr(img_np, cls=True)
 
-                if not results or not results[0]:
+                if hasattr(results, "__iter__"):
+                    results = list(results)
+
+                if not results:
                     continue
 
-                text_lines = [line[1][0] for line in results[0] if line and len(line) > 1 and len(line[1]) > 0]
+                text_lines = []
+                if isinstance(results[0], dict) and "rec_texts" in results[0]:
+                    text_lines = results[0]["rec_texts"]
+                elif isinstance(results[0], list):
+                    for line in results[0]:
+                        if line and len(line) > 1 and len(line[1]) > 0:
+                            text_lines.append(line[1][0])
+
                 page_text = "\n".join(text_lines).strip()
                 
                 all_text.append(f"[Page {i + 1}]\n{page_text}")
