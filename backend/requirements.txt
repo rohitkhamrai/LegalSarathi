@@ -30,3 +30,6 @@ faiss-cpu==1.9.0
 numpy==2.2.0
 jinja2==3.1.4
 python-multipart==0.0.20
+# ── Supabase integration ──────────────────────────────────────────────────────
+supabase==2.9.1
+python-jose[cryptography]==3.3.0

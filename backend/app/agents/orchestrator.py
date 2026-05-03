@@ -76,10 +76,18 @@ class Orchestrator:
         if not self.rag_service.is_ready:
             print("[RAG] Not ready — run ingest_corpus.py to build index")
 
-    async def process_query(self, text: str, lang: str):
+    async def process_query(self, text: str, lang: str = "hi", pinned_history: list = None):
         if not text or not text.strip():
             from fastapi import HTTPException
             raise HTTPException(status_code=422, detail="Query cannot be empty.")
+
+        # ── Pinned History Context Injection ──────────────────────────────────
+        if pinned_history:
+            # We prepend a summary of the pinned session to the query
+            # to give the model immediate context without bloating prompt
+            pinned_summary = "\n".join([f"{m['role']}: {m['content'][:200]}" for m in pinned_history[-5:]])
+            text = f"CONTEXT FROM PINNED SESSION:\n{pinned_summary}\n\nUSER CURRENT QUERY: {text}"
+
 
         # ── LRU Cache check ───────────────────────────────────────────────────
         cache_key = _cache_key(text, lang)
@@ -228,3 +236,48 @@ class Orchestrator:
         # Store in LRU cache
         _cache_set(cache_key, result)
         return result
+
+    # ── Document Chat ─────────────────────────────────────────────────────────
+
+    async def process_doc_chat(
+        self,
+        doc_text: str,
+        message: str,
+        mode: str,
+        history: list,
+        lang: str,
+    ) -> dict:
+        """
+        Document-specific chat — bypasses RAG entirely.
+        The extracted document text IS the retrieval context.
+        """
+        # 1. Translate user message to English for Groq
+        try:
+            english_message = await self.translator.translate_to_english(message, lang)
+        except Exception:
+            english_message = message  # fallback: send as-is
+
+        # 2. Trim doc text to 4000 chars (fits comfortably in Groq context)
+        doc_context = doc_text[:4000]
+
+        # 3. Build conversation history string
+        history_str = ""
+        for msg in history[-6:]:
+            label = "User" if msg.get("role") == "user" else "Assistant"
+            history_str += f"{label}: {msg.get('content', '')[:300]}\n"
+
+        # 4. Call Groq with mode-specific prompt
+        response = await self.groq_service.doc_chat_response(
+            doc_context=doc_context,
+            message=english_message,
+            mode=mode,
+            history=history_str,
+            target_lang=lang,
+        )
+
+        return {
+            "mode": mode,
+            "response": response,
+            "doc_chars_used": len(doc_context),
+        }
+
