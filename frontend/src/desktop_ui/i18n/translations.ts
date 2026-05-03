@@ -8,12 +8,10 @@ const t = (en: string, overrides: Partial<Record<LangCode, string>> = {}): Dict 
   hi: overrides.hi ?? en,
   en,
   mr: overrides.mr ?? en,
+  tu: overrides.tu ?? en,
+  kk: overrides.kk ?? en,
   te: overrides.te ?? en,
   ta: overrides.ta ?? en,
-  bn: overrides.bn ?? en,
-  gu: overrides.gu ?? en,
-  ml: overrides.ml ?? en,
-  pa: overrides.pa ?? en,
 });
 
 export const TRANSLATIONS = {
@@ -153,39 +151,8 @@ export const TRANSLATIONS = {
   }),
   consumerComplaint: t("Consumer Complaint", {
     kn: "ಗ್ರಾಹಕ ದೂರು", hi: "उपभोक्ता शिकायत", mr: "ग्राहक तक्रार",
-    te: "వినియోగదారుల ఫిర్యాదు", ta: "நுகர்வோர் புகார்",
+    te: "వినియోగదారు ఫిర్యాదు", ta: "நுகர்வோர் புகார்",
   }),
-  tenantRightsQuery: t("What are my rights as a tenant?", {
-    kn: "ಬಾಡಿಗೆದಾರರಾಗಿ ನನ್ನ ಹಕ್ಕುಗಳೇನು?",
-    hi: "किरायेदार के रूप में मेरे क्या अधिकार हैं?",
-    mr: "भाडेकरू म्हणून माझे अधिकार काय आहेत?",
-    te: "అద్దెదారుగా నా హక్కులు ఏమిటి?",
-    ta: "குத்தகைதாரராக எனது உரிமைகள் என்ன?",
-  }),
-  fileRtiQuery: t("How do I file an RTI application?", {
-    kn: "ನಾನು ಆರ್‌ಟಿಐ ಅರ್ಜಿಯನ್ನು ಹೇಗೆ ಸಲ್ಲಿಸುವುದು?",
-    hi: "मैं आरटीआई आवेदन कैसे दाखिल करूं?",
-    mr: "मी आरटीआय अर्ज कसा दाखल करू?",
-    te: "నేను RTI దరఖాస్తును ఎలా దాఖలు చేయాలి?",
-    ta: "ஆர்டிஐ விண்ணப்பத்தை எப்படி தாக்கல் செய்வது?",
-  }),
-  consumerComplaintQuery: t("How do I file a consumer complaint?", {
-    kn: "ಗ್ರಾಹಕ ದೂರು ದಾಖಲಿಸುವುದು ಹೇಗೆ?",
-    hi: "उपभोक्ता शिकायत कैसे दर्ज करें?",
-    mr: "ग्राहक तक्रार कशी दाखल करावी?",
-    te: "నేను వినియోగదారుల ఫిర్యాదును ఎలా నమోదు చేయాలి?",
-    ta: "நுகர்வோர் புகாரை எப்படி பதிவு செய்வது?",
-  }),
-  queryTranscript: t("Your query in", {
-    kn: "ನಿಮ್ಮ ಪ್ರಶ್ನೆ ಕನ್ನಡದಲ್ಲಿ",
-    hi: "आपका प्रश्न हिंदी में",
-    mr: "तुमचा प्रश्न मराठीत",
-    te: "మీ ప్రశ్న తెలుగులో",
-    ta: "உங்கள் கேள்வி தமிழில்",
-    tu: "ನಿಮ್ಮ ಪ್ರಶ್ನೆ ತುಳುವಿನಲ್ಲಿ", // Approximate fallback
-    kk: "तुमचा प्रश्न कोंकणीत", // Approximate fallback
-  }),
-
   aiChatbot: t("AI Legal Chatbot", {
     kn: "AI ಕಾನೂನು ಚಾಟ್‌ಬಾಟ್", hi: "AI कानूनी चैटबॉट", mr: "AI कायदेशीर चॅटबॉट",
     te: "AI న్యాయ చాట్‌బాట్", ta: "AI சட்ட சாட்பாட்",
@@ -1178,57 +1145,6 @@ export const TRANSLATIONS = {
   about: t("About", { hi: "परिचय", mr: "परिचय", te: "గురించి", ta: "பற்றி" }),
   privacy: t("Privacy", { hi: "गोपनीयता", mr: "गोपनीयता", te: "గోప్యత", ta: "தனியுரிமை" }),
   terms: t("Terms", { hi: "शर्तें", mr: "अटी", te: "నిబంధనలు", ta: "விதிமுறைகள்" }),
-
-  // ===== Chat response section labels (structured legal guidance) =====
-  chatYourRights: t("⚖️ Your Rights", {
-    kn: "⚖️ ನಿಮ್ಮ ಹಕ್ಕುಗಳು", hi: "⚖️ आपके अधिकार", mr: "⚖️ तुमचे हक्क",
-    te: "⚖️ మీ హక్కులు", ta: "⚖️ உங்கள் உரிமைகள்",
-  }),
-  chatStepsToTake: t("📋 Steps to Take", {
-    kn: "📋 ತೆಗೆದುಕೊಳ್ಳಬೇಕಾದ ಕ್ರಮಗಳು", hi: "📋 उठाए जाने वाले कदम", mr: "📋 घ्यायच्या पायऱ्या",
-    te: "📋 తీసుకోవలసిన చర్యలు", ta: "📋 எடுக்க வேண்டிய படிகள்",
-  }),
-  chatDoNotDo: t("🚫 Do NOT Do", {
-    kn: "🚫 ಮಾಡಬಾರದ ಕಾರ್ಯಗಳು", hi: "🚫 यह न करें", mr: "🚫 हे करू नका",
-    te: "🚫 చేయకూడనివి", ta: "🚫 செய்யக்கூடாதவை",
-  }),
-  chatCollectNow: t("📂 Collect Now", {
-    kn: "📂 ಈಗ ಸಂಗ್ರಹಿಸಿ", hi: "📂 अभी इकट्ठा करें", mr: "📂 आत्ता गोळा करा",
-    te: "📂 ఇప్పుడే సేకరించండి", ta: "📂 இப்போதே சேகரிக்கவும்",
-  }),
-  chatKnowYourLaw: t("💡 Know Your Law", {
-    kn: "💡 ನಿಮ್ಮ ಕಾನೂನು ತಿಳಿಯಿರಿ", hi: "💡 अपना कानून जानें", mr: "💡 तुमचा कायदा जाणून घ्या",
-    te: "💡 మీ చట్టాన్ని తెలుసుకోండి", ta: "💡 உங்கள் சட்டத்தை அறியுங்கள்",
-  }),
-  chatSources: t("Sources", {
-    kn: "ಮೂಲಗಳು", hi: "स्रोत", mr: "स्रोत", te: "మూలాలు", ta: "ஆதாரங்கள்",
-  }),
-  chatConsultLawyer: t("Consult Lawyer", {
-    kn: "ವಕೀಲರನ್ನು ಸಂಪರ್ಕಿಸಿ", hi: "वकील से परामर्श करें", mr: "वकीलाचा सल्ला घ्या",
-    te: "న్యాయవాదిని సంప్రదించండి", ta: "வழக்கறிஞரை ஆலோசிக்கவும்",
-  }),
-  chatExtractedText: t("View Extracted Text", {
-    kn: "ಹೊರತೆಗೆದ ಪಠ್ಯ ನೋಡಿ", hi: "निकाला गया टेक्स्ट देखें", mr: "काढलेला मजकूर पहा",
-    te: "సేకరించిన వచనాన్ని చూడండి", ta: "பிரித்தெடுத்த உரையைக் காண்க",
-  }),
-  chatStartRecording: t("Start Recording", {
-    kn: "ರೆಕಾರ್ಡಿಂಗ್ ಪ್ರಾರಂಭಿಸಿ", hi: "रिकॉर्डिंग शुरू करें", mr: "रेकॉर्डिंग सुरू करा",
-    te: "రికార్డింగ్ ప్రారంభించండి", ta: "பதிவு தொடங்கு",
-  }),
-  chatStop: t("Stop", {
-    kn: "ನಿಲ್ಲಿಸಿ", hi: "रोकें", mr: "थांबवा", te: "ఆపు", ta: "நிறுத்து",
-  }),
-  chatSend: t("Send", {
-    kn: "ಕಳುಹಿಸಿ", hi: "भेजें", mr: "पाठवा", te: "పంపు", ta: "அனுப்பு",
-  }),
-  chatProcessing: t("Processing...", {
-    kn: "ಪ್ರಕ್ರಿಯೆ ನಡೆಯುತ್ತಿದೆ...", hi: "प्रक्रिया हो रही है...", mr: "प्रक्रिया होत आहे...",
-    te: "ప్రాసెస్ అవుతోంది...", ta: "செயலாக்கப்படுகிறது...",
-  }),
-  chatTapToSpeak: t("Tap mic to speak", {
-    kn: "ಮಾತನಾಡಲು ಮೈಕ್ ಟ್ಯಾಪ್ ಮಾಡಿ", hi: "बोलने के लिए माइक टैप करें", mr: "बोलण्यासाठी मायक टॅप करा",
-    te: "మాట్లాడటానికి మైక్ నొక్కండి", ta: "பேச மைக்கைத் தட்டவும்",
-  }),
 
 } as const;
 

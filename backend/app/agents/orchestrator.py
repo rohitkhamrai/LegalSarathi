@@ -191,9 +191,8 @@ class Orchestrator:
 
         query_in_target_lang = text
         if lang not in ("en", "en-IN"):
-            target_lang = "kn" if lang == "tu" else "mr" if lang == "kk" else lang
             try:
-                query_in_target_lang = await self.translator.translate(text, source_lang="auto", target_lang=target_lang)
+                query_in_target_lang = await self.translator.translate(text, source_lang="auto", target_lang=lang)
             except Exception as e:
                 print(f"[TRANSLATE ERROR] query target lang failed: {e}")
 
