@@ -39,7 +39,7 @@ class CitationAuditService:
             uncited_available: retrieved chunks that were NOT cited (missed)
             badge: display string for UI
         """
-        retrieved_ids = {c["section_ref"] for c in retrieved_chunks}
+        retrieved_ids = {c["section_ref"] for c in retrieved_chunks if c.get("section_ref")}
         retrieved_titles = {c.get("title", "").lower() for c in retrieved_chunks}
 
         # Extract chunk-ID style citations [BNS_73]
@@ -92,7 +92,7 @@ class CitationAuditService:
         if not chunks:
             return base_prompt
         
-        ids = [c["section_ref"] for c in chunks]
+        ids = [c.get("section_ref", "UNKNOWN") for c in chunks]
         instruction = (
             f"\n\nCITATION RULE: When citing a retrieved statute, use the exact ID in square brackets: "
             f"{', '.join('[' + i + ']' for i in ids[:5])}. "

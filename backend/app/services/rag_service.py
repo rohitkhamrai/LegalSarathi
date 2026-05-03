@@ -229,7 +229,7 @@ class RAGService:
         scores, idxs = self._faiss_index.search(q_emb, top_k)
         return [
             {**self._chunks_meta[i], "score": float(s),
-             "parent_content": self._chunks_meta[i].get("parent_content", self._chunks_meta[i]["text"])}
+             "parent_content": self._chunks_meta[i].get("parent_content", self._chunks_meta[i].get("text", self._chunks_meta[i].get("content", "")))}
             for s, i in zip(scores[0], idxs[0]) if i != -1
         ]
 
