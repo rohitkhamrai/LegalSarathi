@@ -63,7 +63,7 @@ class RerankerService:
             reranked = sorted(valid_chunks, key=lambda x: x.get("rerank_score", 0.0), reverse=True)
             top = reranked[:top_k]
             print(
-                f"[RERANK] {len(chunks)} → {len(top)} chunks. "
+                f"[RERANK] {len(chunks)} -> {len(top)} chunks. "
                 f"Top score: {top[0].get('rerank_score', 0):.3f} | "
                 f"section: {top[0].get('section_ref', '?')}"
             )

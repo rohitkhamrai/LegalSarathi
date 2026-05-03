@@ -80,6 +80,7 @@ class QueryRequest(BaseModel):
     query: str
     language: str = "hi"
     pinned_history: list = []   # optional: messages from pinned session
+    conversation_history: list = []  # rolling chat context for multi-turn conversation
 
 class PDFRequest(BaseModel):
     guidance: str
@@ -129,6 +130,7 @@ async def process_legal_query(req: QueryRequest):
         text=req.query,
         lang=req.language,
         pinned_history=req.pinned_history if req.pinned_history else None,
+        conversation_history=req.conversation_history if req.conversation_history else None,
     )
 
 
