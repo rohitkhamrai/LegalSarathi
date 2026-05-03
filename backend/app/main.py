@@ -38,7 +38,7 @@ document_generation_service = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global orchestrator, voice_service, doc_service, ocr_service
+    global orchestrator, voice_service, doc_service, ocr_service, document_generation_service
     try:
         orchestrator = Orchestrator()
     except Exception as e:
@@ -348,7 +348,7 @@ async def generate_template_pdf(req: DocumentGenerationRequest):
         pdf_buffer = await PDFService.generate_draft(html, f"{req.doc_type} - {req.language}")
         filename = f"{req.doc_type}_{req.language}.pdf"
         return StreamingResponse(
-            iter([pdf_buffer.getvalue()]),
+            pdf_buffer,
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )

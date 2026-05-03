@@ -1,68 +1,71 @@
 """
-OCR Service — PaddleOCR (lazy-loaded) + PyMuPDF for PDF rendering
+OCR Service — EasyOCR + PyMuPDF for PDF rendering
 
-Strategy:
-  - PaddleOCR: fast, accurate, scalable for English + Indian scripts
-  - PyMuPDF (fitz): replaces Poppler/pdf2image, no binary install required,
-    renders PDF pages to PIL images at high DPI for OCR
+Replaced PaddleOCR with EasyOCR which works reliably on Windows without
+MKL-DNN/oneDNN runtime crashes or complex PaddleX version conflicts.
 
-Supports: en, hi, ta, te, kn, ml, mr, bn, gu, pa, ur, or
-Model packs downloaded on first use.
+EasyOCR supports: en, hi, ta, te, kn, ml, mr, bn, gu, pa, ur
+Model packs downloaded on first use (~100MB per language).
 """
 
 import io
 import os
-from pathlib import Path
 
-
-# PaddleOCR language code mapping
-LANG_TO_PADDLEOCR = {
-    "hi": "hi",
-    "ta": "ta",
-    "te": "te",
-    "kn": "kn",
-    "ml": "ml",
-    "mr": "mr",
-    "bn": "bn",
-    "gu": "gu",
-    "pa": "pa",
-    "ur": "ur",
-    "or": "en", # Odia fallback
-    "en": "en",
+# EasyOCR language code mapping
+LANG_TO_EASYOCR = {
+    "hi": ["hi", "en"],
+    "ta": ["ta", "en"],
+    "te": ["te", "en"],
+    "kn": ["kn", "en"],
+    "ml": ["ml", "en"],
+    "mr": ["mr", "en"],
+    "bn": ["bn", "en"],
+    "gu": ["gu", "en"],
+    "pa": ["pa", "en"],
+    "ur": ["ur", "en"],
+    "or": ["en"],       # Odia not supported by EasyOCR, fallback
+    "en": ["en"],
 }
 
-# Cache: lang_key → PaddleOCR instance
-_ocrs: dict = {}
+# Per-language EasyOCR instance cache
+_readers: dict = {}
 
 
-def _get_paddle_ocr(lang: str):
-    """Lazy-load and cache PaddleOCR instance for the given language."""
+def _get_reader(lang: str):
+    """Lazy-load and cache an EasyOCR Reader for the given language."""
     try:
-        from paddleocr import PaddleOCR
+        import easyocr
     except ImportError:
-        raise RuntimeError("paddleocr not installed. Run: pip install paddleocr paddlepaddle")
+        raise RuntimeError("easyocr not installed. Run: pip install easyocr")
 
-    paddle_lang = LANG_TO_PADDLEOCR.get(lang, "en")
+    lang_list = LANG_TO_EASYOCR.get(lang, ["en"])
+    cache_key = ",".join(lang_list)
 
-    if paddle_lang not in _ocrs:
-        print(f"[OCR] Loading PaddleOCR for lang='{paddle_lang}' (first-time, may take a while)")
-        _ocrs[paddle_lang] = PaddleOCR(use_angle_cls=True, lang=paddle_lang, enable_mkldnn=False)
-        print(f"[OCR] PaddleOCR ready for lang='{paddle_lang}'.")
+    if cache_key not in _readers:
+        print(f"[OCR] Loading EasyOCR for languages={lang_list} (first-time, may take a moment)")
+        _readers[cache_key] = easyocr.Reader(lang_list, gpu=False, verbose=False)
+        print(f"[OCR] EasyOCR ready for languages={lang_list}.")
 
-    return _ocrs[paddle_lang]
+    return _readers[cache_key]
+
+
+def _run_ocr(reader, img_np) -> list:
+    """Run EasyOCR on a numpy image and return a list of text strings."""
+    try:
+        results = reader.readtext(img_np, detail=0, paragraph=False)
+        return [str(t).strip() for t in results if t and str(t).strip()]
+    except Exception as e:
+        print(f"[OCR] _run_ocr error: {e}")
+        return []
 
 
 def _pdf_to_images(pdf_bytes: bytes, dpi: int = 200):
-    """
-    Convert PDF pages to PIL Images using PyMuPDF (fitz).
-    No Poppler required — pure Python.
-    """
+    """Convert PDF pages to PIL Images (PyMuPDF preferred, pdf2image fallback)."""
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         images = []
-        scale = dpi / 72.0  # 72 is PDF's native DPI
-        mat = fitz.Matrix(scale, scale)
+        mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
         for page in doc:
             pix = page.get_pixmap(matrix=mat)
             from PIL import Image
@@ -71,7 +74,6 @@ def _pdf_to_images(pdf_bytes: bytes, dpi: int = 200):
         doc.close()
         return images
     except ImportError:
-        # Fallback to pdf2image + Poppler if PyMuPDF is unavailable
         from pdf2image import convert_from_bytes
         return convert_from_bytes(pdf_bytes, dpi=dpi)
 
@@ -80,36 +82,16 @@ class OCRService:
     def extract_text(self, image_bytes: bytes, lang: str = "en") -> str:
         """OCR image bytes → clean text. Accepts JPEG, PNG, TIFF, BMP."""
         try:
-            from PIL import Image
             import numpy as np
+            from PIL import Image
 
             img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img_np = np.array(img)[:, :, ::-1]  # Convert RGB to BGR for PaddleOCR
+            img_np = np.array(img)
 
-            ocr = _get_paddle_ocr(lang)
-            try:
-                results = ocr.predict(img_np)
-            except AttributeError:
-                results = ocr.ocr(img_np, cls=True)
+            reader = _get_reader(lang)
+            lines = _run_ocr(reader, img_np)
+            text = "\n".join(lines).strip()
 
-            if hasattr(results, "__iter__"):
-                results = list(results)
-
-            if not results:
-                return ""
-
-            text_lines = []
-            # Handle new PaddleX 3.0 format
-            if isinstance(results[0], dict) and "rec_texts" in results[0]:
-                text_lines = results[0]["rec_texts"]
-            # Handle old PaddleOCR format
-            elif isinstance(results[0], list):
-                for line in results[0]:
-                    if line and len(line) > 1 and len(line[1]) > 0:
-                        text_lines.append(line[1][0])
-            
-            text = "\n".join(text_lines).strip()
-            
             print(f"[OCR] Extracted {len(text)} chars from image (lang={lang})")
             return text
         except Exception as e:
@@ -119,40 +101,21 @@ class OCRService:
     def extract_from_pdf(self, pdf_bytes: bytes, lang: str = "en") -> str:
         """OCR a PDF: convert pages → images → OCR each → join."""
         try:
-            images = _pdf_to_images(pdf_bytes)
-            ocr = _get_paddle_ocr(lang)
-            all_text = []
-
             import numpy as np
 
+            images = _pdf_to_images(pdf_bytes)
+            reader = _get_reader(lang)
+            all_text = []
+
             for i, img in enumerate(images):
-                img_np = np.array(img.convert("RGB"))[:, :, ::-1]  # Convert RGB to BGR
-                try:
-                    results = ocr.predict(img_np)
-                except AttributeError:
-                    results = ocr.ocr(img_np, cls=True)
-
-                if hasattr(results, "__iter__"):
-                    results = list(results)
-
-                if not results:
-                    continue
-
-                text_lines = []
-                if isinstance(results[0], dict) and "rec_texts" in results[0]:
-                    text_lines = results[0]["rec_texts"]
-                elif isinstance(results[0], list):
-                    for line in results[0]:
-                        if line and len(line) > 1 and len(line[1]) > 0:
-                            text_lines.append(line[1][0])
-
-                page_text = "\n".join(text_lines).strip()
-                
-                all_text.append(f"[Page {i + 1}]\n{page_text}")
+                img_np = np.array(img.convert("RGB"))
+                lines = _run_ocr(reader, img_np)
+                page_text = "\n".join(lines).strip()
+                if page_text:
+                    all_text.append(f"[Page {i + 1}]\n{page_text}")
                 print(f"[OCR] Page {i + 1}: {len(page_text)} chars")
 
             return "\n\n".join(all_text)
-
         except Exception as e:
             print(f"[OCR] extract_from_pdf error: {e}")
             return ""
@@ -162,5 +125,4 @@ class OCRService:
         ext = os.path.splitext(filename.lower())[1] if filename else ""
         if ext == ".pdf":
             return self.extract_from_pdf(file_bytes, lang)
-        else:
-            return self.extract_text(file_bytes, lang)
+        return self.extract_text(file_bytes, lang)

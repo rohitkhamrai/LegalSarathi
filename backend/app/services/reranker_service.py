@@ -44,7 +44,7 @@ class RerankerService:
         Returns top_k chunks sorted by re-ranking score descending.
         Falls back to original order if model unavailable.
         """
-        valid_chunks = [c for c in chunks if c.get("text", "").strip()]
+        valid_chunks = [c for c in chunks if (c.get("text") or c.get("content") or "").strip()]
         if not valid_chunks:
             return chunks[:top_k]
 
@@ -53,7 +53,7 @@ class RerankerService:
             return valid_chunks[:top_k]
 
         try:
-            pairs = [(query, c.get("text", "")[:512]) for c in valid_chunks]
+            pairs = [(query, (c.get("text") or c.get("content") or "")[:512]) for c in valid_chunks]
             scores = model.predict(pairs)
 
             # Attach rerank score and sort
