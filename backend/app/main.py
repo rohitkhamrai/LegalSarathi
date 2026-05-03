@@ -17,7 +17,7 @@ else:
     load_dotenv()
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from app.core.config import settings
@@ -36,10 +36,25 @@ ocr_service = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global orchestrator, voice_service, doc_service, ocr_service
-    orchestrator = Orchestrator()
-    voice_service = VoiceService()
-    doc_service = DocService()
-    ocr_service = OCRService()
+    try:
+        orchestrator = Orchestrator()
+    except Exception as e:
+        print(f"[STARTUP ERROR] Orchestrator failed to initialize: {e}")
+
+    try:
+        voice_service = VoiceService()
+    except Exception as e:
+        print(f"[STARTUP ERROR] VoiceService failed to initialize: {e}")
+
+    try:
+        doc_service = DocService()
+    except Exception as e:
+        print(f"[STARTUP ERROR] DocService failed to initialize: {e}")
+
+    try:
+        ocr_service = OCRService()
+    except Exception as e:
+        print(f"[STARTUP ERROR] OCRService failed to initialize: {e}")
     yield
 
 app = FastAPI(title="Legal Sarathi 2.0 API", lifespan=lifespan)
@@ -79,6 +94,8 @@ async def health_check():
 
 @app.post("/api/query")
 async def process_legal_query(req: QueryRequest):
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator service is still initializing or failed to load.")
     return await orchestrator.process_query(text=req.query, lang=req.language)
 
 
@@ -94,6 +111,8 @@ async def ocr_extract(
     Frontend uses this to show a text preview before submitting to /api/ocr-query.
     """
     try:
+        if not ocr_service:
+            raise HTTPException(status_code=503, detail="OCR service is unavailable.")
         file_bytes = await image.read()
         filename = image.filename or ""
         extracted = ocr_service.extract(file_bytes, filename, lang)
@@ -116,6 +135,8 @@ async def ocr_query(
     Returns the same structure as /api/query.
     """
     try:
+        if not ocr_service or not orchestrator:
+            raise HTTPException(status_code=503, detail="OCR or Orchestrator service is unavailable.")
         file_bytes = await image.read()
         filename = image.filename or ""
         extracted = ocr_service.extract(file_bytes, filename, lang)
@@ -138,10 +159,13 @@ async def ocr_query(
 # ── Voice Endpoints ───────────────────────────────────────────────────────────
 
 @app.post("/api/tts")
-async def text_to_speech(req: TTSRequest):
+async def text_to_speech(req: TTSRequest, background_tasks: BackgroundTasks):
     """Standalone TTS — convert any text to mp3 in given lang. Used for replay."""
     try:
+        if not voice_service:
+            raise HTTPException(status_code=503, detail="Voice service is unavailable.")
         mp3_path = await voice_service.synthesize(req.text, lang=req.lang)
+        background_tasks.add_task(os.unlink, mp3_path)
         return FileResponse(
             mp3_path,
             media_type="audio/mpeg",
@@ -153,11 +177,14 @@ async def text_to_speech(req: TTSRequest):
 
 @app.post("/api/voice-query")
 async def voice_query(
+    background_tasks: BackgroundTasks,
     audio: UploadFile = File(...),
     lang: str = Form(default="hi")
 ):
     """Voice-in / Voice-out: accept audio (any format), return mp3 response."""
     try:
+        if not voice_service or not orchestrator:
+            raise HTTPException(status_code=503, detail="Voice or Orchestrator service is unavailable.")
         audio_bytes = await audio.read()
         # Groq Whisper accepts WebM/Opus/WAV directly — no conversion needed
         transcribed = voice_service.transcribe(audio_bytes, lang=lang)
@@ -168,6 +195,7 @@ async def voice_query(
         buddy_text = result.get("buddy_text", "No guidance available.")
 
         mp3_path = await voice_service.synthesize(buddy_text, lang=lang)
+        background_tasks.add_task(os.unlink, mp3_path)
         return FileResponse(
             mp3_path,
             media_type="audio/mpeg",
@@ -203,6 +231,8 @@ async def download_pdf(req: PDFRequest):
 async def generate_draft_pdf(req: DocRequest):
     """Generates an RTI/FIR/BAIL draft using Groq and returns it as a PDF."""
     try:
+        if not doc_service:
+            raise HTTPException(status_code=503, detail="Doc service is unavailable.")
         draft_text = await doc_service.generate_document(req.query, req.doc_type, req.lang)
         pdf_buffer = await PDFService.generate_draft(draft_text, f"{req.doc_type} Draft: {req.query}")
         return StreamingResponse(
