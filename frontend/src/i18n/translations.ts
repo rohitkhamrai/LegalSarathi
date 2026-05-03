@@ -8,10 +8,12 @@ const t = (en: string, overrides: Partial<Record<LangCode, string>> = {}): Dict 
   hi: overrides.hi ?? en,
   en,
   mr: overrides.mr ?? en,
-  tu: overrides.tu ?? en,
-  kk: overrides.kk ?? en,
   te: overrides.te ?? en,
   ta: overrides.ta ?? en,
+  bn: overrides.bn ?? en,
+  gu: overrides.gu ?? en,
+  ml: overrides.ml ?? en,
+  pa: overrides.pa ?? en,
 });
 
 export const TRANSLATIONS = {

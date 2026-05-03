@@ -19,8 +19,7 @@ from app.core.config import settings
 LANG_TO_WHISPER = {
     "hi": "hi", "ta": "ta", "te": "te", "mr": "mr",
     "bn": "bn", "en": "en", "gu": "gu", "kn": "kn",
-    "ml": "ml", "pa": "pa", "ur": "ur", "or": "or", "as": "as",
-    "tu": "kn", "kk": "kok",
+    "ml": "ml", "pa": "pa",
 }
 
 # Microsoft Neural voices per language — chosen for naturalness
@@ -36,9 +35,6 @@ EDGE_TTS_VOICES = {
     "kn": "kn-IN-SapnaNeural",      # Kannada — female
     "ml": "ml-IN-SobhanaNeural",    # Malayalam — female
     "pa": "pa-IN-OjaswineNeural",   # Punjabi — female
-    "ur": "ur-PK-UzmaNeural",       # Urdu — female
-    "tu": "kn-IN-SapnaNeural",      # Tulu (fallback to Kannada)
-    "kk": "mr-IN-AarohiNeural",     # Konkani (fallback to Marathi)
 }
 
 # Domain-specific legal vocabulary prompt per language
