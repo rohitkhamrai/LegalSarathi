@@ -225,7 +225,6 @@ const Chat = () => {
                 queryInTargetLang: data.query_in_target_lang,
                 topic: "legal",
                 lawChip: data.legal_keys?.[0] || undefined,
-                followups: data.followups || [],
                 severityLevel: data.severity_level,
                 situationSummary: data.situation_summary,
                 rights: data.rights || [],
@@ -418,7 +417,6 @@ const Chat = () => {
           queryInTargetLang: data.query_in_target_lang,
           topic: "legal",
           lawChip: data.legal_keys?.[0] || undefined,
-          followups: data.followups || [],
           severityLevel: data.severity_level,
           situationSummary: data.situation_summary,
           rights: data.rights || [],
@@ -514,7 +512,6 @@ const Chat = () => {
           text: data.buddy_text || data.translated || "Document processed.",
           topic: "legal",
           lawChip: data.legal_keys?.[0] || undefined,
-          followups: data.followups || [],
           ocrExtractedText: data.ocr_extracted_text,
         },
       ]);

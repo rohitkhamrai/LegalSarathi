@@ -4,7 +4,7 @@ export function detectUrgency(text: string): boolean {
   const keywords = [
     "arrest", "police", "violence", "beaten", "fir", 
     "bail", "jail", "urgent", "emergency", "threat", 
-    "kidnap", "murder", "assault", "assasination"
+    "kidnap", "murder", "assault", "assassination"
   ];
   return keywords.some((k) => t.includes(k));
 }

@@ -10,7 +10,7 @@ deep-translator==1.11.4
 # ctranslate2==4.5.0  # Heavy optional dependency
 transformers==4.47.1
 # IndicTransToolkit==3.1.2  # Heavy optional dependency
-# torch==2.5.1  # Heavy optional dependency
+torch==2.5.1  # Heavy optional dependency
 requests==2.32.3
 beautifulsoup4==4.12.3
 SpeechRecognition==3.14.0
