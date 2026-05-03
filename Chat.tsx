@@ -49,6 +49,10 @@ const Chat = () => {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [typing, setTyping] = useState(false);
   const [urgent, setUrgent] = useState(false);
+  // Tracks the OCR-extracted text of the currently active document.
+  // When set, follow-up queries go to /api/doc-chat instead of /api/query.
+  const [activeDocText, setActiveDocText] = useState<string | null>(null);
+  const [activeDocName, setActiveDocName] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const seededRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -438,6 +442,34 @@ const Chat = () => {
   const replyTo = async (userText: string) => {
     setTyping(true);
     try {
+      // If a document is loaded, use the doc-chat endpoint (document-aware AI)
+      if (activeDocText) {
+        const res = await fetch("/api/doc-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            extracted_text: activeDocText,
+            message: userText,
+            mode: "qa",
+            history: msgs.filter(m => m.role !== "ai" || m.ocrExtractedText == null).slice(-6).map(m => ({ role: m.role, content: m.text })),
+            language: lang,
+          })
+        });
+        if (!res.ok) throw new Error("Doc-chat API failed");
+        const data = await res.json();
+        setMsgs((m) => [
+          ...m,
+          {
+            id: crypto.randomUUID(),
+            role: "ai",
+            text: data.response || "I couldn't process that.",
+            topic: "legal",
+          },
+        ]);
+        return;
+      }
+
+      // No document active — use standard RAG pipeline
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -535,22 +567,40 @@ const Chat = () => {
     fd.append("lang", lang);
 
     try {
-      const res = await fetch("/api/ocr-query", {
+      // Step 1: Extract text from the document
+      const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: fd });
+      if (!ocrRes.ok) throw new Error("OCR failed");
+      const ocrData = await ocrRes.json();
+      const extractedText: string = ocrData.extracted_text || "";
+
+      if (!extractedText) throw new Error("Empty extraction");
+
+      // Step 2: Store the extracted text so follow-up queries are document-aware
+      setActiveDocText(extractedText);
+      setActiveDocName(file.name);
+
+      // Step 3: Get an initial AI analysis of the document
+      const chatRes = await fetch("/api/doc-chat", {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          extracted_text: extractedText,
+          message: "Provide a brief summary of this legal document, identify the parties involved, the main legal issue, and any deadlines or amounts mentioned.",
+          mode: "summary",
+          history: [],
+          language: lang,
+        }),
       });
-      if (!res.ok) throw new Error("OCR failed");
-      const data = await res.json();
+      const chatData = chatRes.ok ? await chatRes.json() : null;
 
       setMsgs((m) => [
         ...m,
         {
           id: crypto.randomUUID(),
           role: "ai",
-          text: data.buddy_text || data.translated || "Document processed.",
+          text: chatData?.response || "Document processed. You can now ask questions about it.",
           topic: "legal",
-          lawChip: data.legal_keys?.[0] || undefined,
-          ocrExtractedText: data.ocr_extracted_text,
+          ocrExtractedText: extractedText,
         },
       ]);
     } catch (err) {
@@ -575,6 +625,21 @@ const Chat = () => {
             className="px-3 h-8 rounded-full bg-destructive text-destructive-foreground text-xs font-semibold tap"
           >
             {t("callNow")}
+          </button>
+        </div>
+      )}
+
+      {/* Active Document Context Banner */}
+      {activeDocText && (
+        <div className="mx-4 mb-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 flex items-center gap-2">
+          <span className="text-xs">📄</span>
+          <span className="flex-1 text-xs text-primary font-medium truncate">{activeDocName} — Document mode active</span>
+          <button
+            onClick={() => { setActiveDocText(null); setActiveDocName(null); }}
+            className="text-[10px] text-muted-foreground hover:text-destructive transition-colors ml-1 shrink-0"
+            title="Clear document context"
+          >
+            ✕ Clear
           </button>
         </div>
       )}
