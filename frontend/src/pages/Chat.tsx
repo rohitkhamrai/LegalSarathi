@@ -538,9 +538,7 @@ const Chat = () => {
         { role: "user", content: userText },
         { role: "assistant", content: aiText },
       ].slice(-12));
-      // Persist the turn to Supabase (no-op for guests)
-      const sid = sessionId ?? activeSessionId;
-      if (sid) saveTurn(sid, userText, data);
+      // NOTE: persistence is handled server-side in main.py — no duplicate save needed here.
     } catch (err) {
       setMsgs((m) => [
         ...m,
@@ -647,52 +645,66 @@ const Chat = () => {
     if (!file) return;
     if (!tryConsume()) return;
 
-    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 Uploading: ${file.name}` }]);
+    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 ${file.name}` }]);
     setTyping(true);
 
-    const fd = new FormData();
-    fd.append("image", file);
-    fd.append("lang", lang);
-
     try {
-      // Step 1: Extract text from the document
-      const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: fd });
+      // ── Step 1: OCR — extract raw text ─────────────────────────────────────
+      const ocrFd = new FormData();
+      ocrFd.append("image", file);
+      ocrFd.append("lang", lang);
+      const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: ocrFd });
       if (!ocrRes.ok) throw new Error("OCR failed");
       const ocrData = await ocrRes.json();
       const extractedText: string = ocrData.extracted_text || "";
+      if (!extractedText) throw new Error("No text could be extracted from the document.");
 
-      if (!extractedText) throw new Error("Empty extraction");
+      // ── Step 2: Ingest — chunk + embed + store in vector DB ────────────────
+      // Only possible for logged-in users (requires JWT for user_id scoping).
+      const raw = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+      const token = raw ? JSON.parse(localStorage.getItem(raw) || "{}")?.access_token : null;
 
-      // Step 2: Store the extracted text so follow-up queries are document-aware
+      if (token) {
+        const ingestFd = new FormData();
+        ingestFd.append("file", file);
+        ingestFd.append("session_id", activeSessionId ?? "");
+        ingestFd.append("lang", lang);
+        // Fire-and-forget: ingest runs in the background (chunking + embedding takes a few seconds)
+        fetch("/api/documents/ingest", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: ingestFd,
+        }).then((r) => {
+          if (!r.ok) console.warn("[INGEST] Document ingest failed:", r.status);
+          else console.info("[INGEST] Document embedded and stored successfully");
+        }).catch((e) => console.warn("[INGEST] Ingest error (non-fatal):", e));
+      }
+
+      // ── Step 3: Keep text in local state for same-session doc-chat fallback ─
+      // (doc-chat uses this for quick Q&A without waiting for vector retrieval)
       setActiveDocText(extractedText);
       setActiveDocName(file.name);
 
-      // Step 3: Get an initial AI analysis of the document
-      const chatRes = await fetch("/api/doc-chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          extracted_text: extractedText,
-          message: "Provide a brief summary of this legal document, identify the parties involved, the main legal issue, and any deadlines or amounts mentioned.",
-          mode: "summary",
-          history: [],
-          language: lang,
-        }),
-      });
-      const chatData = chatRes.ok ? await chatRes.json() : null;
-
+      // ── Step 4: Minimal ACK — do NOT summarise unless user asks ────────────
+      const charCount = extractedText.length;
+      const wordEst = Math.round(charCount / 5);
       setMsgs((m) => [
         ...m,
         {
           id: crypto.randomUUID(),
           role: "ai",
-          text: chatData?.response || "Document processed. You can now ask questions about it.",
+          text: `📄 **${file.name}** has been uploaded and indexed (~${wordEst} words extracted).\n\nYou can now ask me anything about it — I'll reference it automatically in my answers.`,
           topic: "legal",
           ocrExtractedText: extractedText,
         },
       ]);
     } catch (err) {
-      setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "ai", text: "Error processing document. Please ensure it's a clear image or PDF." }]);
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setMsgs((m) => [...m, {
+        id: crypto.randomUUID(),
+        role: "ai",
+        text: `⚠️ Could not process document: ${msg}. Please ensure it's a clear image or PDF.`,
+      }]);
     } finally {
       setTyping(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -811,7 +823,12 @@ const Chat = () => {
                   </div>
                 )}
 
-                {/* Situation summary */}
+                {/* Plain text fallback — for doc-chat responses that have no structured fields */}
+                {!m.situationSummary && m.text && (
+                  <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                )}
+
+                {/* Situation summary — for RAG pipeline responses */}
                 {m.situationSummary && (
                   <p className="text-sm font-medium text-foreground leading-relaxed">{m.situationSummary}</p>
                 )}
