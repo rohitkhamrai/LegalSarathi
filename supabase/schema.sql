@@ -130,3 +130,32 @@ CREATE POLICY "Own events"     ON user_events       FOR ALL USING (auth.uid() = 
 -- ── 5. Storage bucket for legal-documents ────────────────────────────────────
 -- Create this manually in Supabase Dashboard → Storage → New Bucket
 -- Name: legal-documents | Public: OFF (use signed URLs)
+
+-- ── 6. Performance Indexes ────────────────────────────────────────────────────
+-- Optimizes paginated queries for chat history feature.
+-- Run these ONCE after the main schema is applied.
+
+-- Sessions: fast user timeline (newest first)
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_time
+    ON chat_sessions (user_id, created_at DESC);
+
+-- Sessions: pinned sessions always float to top
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_pinned
+    ON chat_sessions (user_id, is_pinned DESC, created_at DESC);
+
+-- Sessions: filter out expired sessions efficiently
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_expires
+    ON chat_sessions (expires_at);
+
+-- Messages: chronological fetch within a session
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_time
+    ON chat_messages (session_id, created_at ASC);
+
+-- Messages: user-scoped for search and security checks
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_time
+    ON chat_messages (user_id, created_at DESC);
+
+-- Messages: full-text search support (GIN index on content)
+CREATE INDEX IF NOT EXISTS idx_chat_messages_content_fts
+    ON chat_messages USING gin(to_tsvector('english', content));
+

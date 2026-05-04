@@ -17,7 +17,7 @@ else:
     load_dotenv()
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from app.core.config import settings
@@ -28,7 +28,12 @@ from app.services.voice_service import VoiceService
 from app.services.doc_service import DocService
 from app.services.ocr_service import OCRService
 from app.services.document_generation_service import DocumentGenerationService
+from app.middleware.auth import get_optional_user
+from app.services.chat_history_service import ChatHistoryService
+from app.api.history import router as history_router
 from jinja2 import TemplateNotFound
+
+_chat_history_svc = ChatHistoryService()
 
 orchestrator = None
 voice_service = None
@@ -76,9 +81,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Chat History Router ───────────────────────────────────────────────────────
+app.include_router(history_router)
+
 class QueryRequest(BaseModel):
     query: str
     language: str = "hi"
+    session_id: str = ""        # optional: if provided, auto-save turn to this session
     pinned_history: list = []   # optional: messages from pinned session
     conversation_history: list = []  # rolling chat context for multi-turn conversation
 
@@ -123,15 +132,41 @@ async def health_check():
 
 
 @app.post("/api/query")
-async def process_legal_query(req: QueryRequest):
+async def process_legal_query(req: QueryRequest, request: Request):
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator service is still initializing or failed to load.")
-    return await orchestrator.process_query(
+
+    result = await orchestrator.process_query(
         text=req.query,
         lang=req.language,
         pinned_history=req.pinned_history if req.pinned_history else None,
         conversation_history=req.conversation_history if req.conversation_history else None,
     )
+
+    # ── Auto-save to history for authenticated users ──────────────────────────
+    # This is fire-and-forget: history save failure NEVER breaks the AI response.
+    if req.session_id:
+        try:
+            user = await get_optional_user(request)
+            if user and user.get("user_id"):
+                _chat_history_svc.save_turn(
+                    user_id=user["user_id"],
+                    session_id=req.session_id,
+                    user_text=req.query,
+                    ai_response=result,
+                )
+                # Auto-title the session from the first message (if title is still default)
+                if not req.conversation_history:
+                    _chat_history_svc.update_session_title_from_first_message(
+                        user_id=user["user_id"],
+                        session_id=req.session_id,
+                        first_message=req.query,
+                    )
+        except Exception as e:
+            # History save is non-critical — log and continue
+            print(f"[HISTORY] Auto-save failed (non-fatal): {e}")
+
+    return result
 
 
 @app.post("/api/doc-chat")
