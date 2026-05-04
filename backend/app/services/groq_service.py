@@ -75,6 +75,7 @@ Output: Warrantless Arrest, BNS Section 303, Right to be informed, Petty Theft, 
         specialist_opinion: str = "",
         rag_context: str = "",
         conversation_history: list = [],
+        doc_context: str = "",
     ) -> dict:
         """
         Core buddy synthesis. Returns structured JSON with situation summary,
@@ -94,14 +95,18 @@ Output: Warrantless Arrest, BNS Section 303, Right to be informed, Petty Theft, 
         if specialist_opinion and "unavailable" not in specialist_opinion.lower() and len(specialist_opinion) > 30:
             specialist_block = f"\n\nGGUF SPECIALIST (BNS/BNSS trained):\n{specialist_opinion[:600]}"
 
+        doc_block = ""
+        if doc_context and doc_context.strip():
+            doc_block = f"\n\nUSER'S UPLOADED DOCUMENTS:\n{doc_context[:1000]}"
+
         system_prompt = f"""You are "Legal Sarathi", a friendly legal buddy helping ordinary Indian citizens understand their rights.
 You speak like a trusted friend, not a lawyer. You are warm, clear, and empowering.
 
 TASK: Analyze the user's situation and respond ENTIRELY in {lang_name}.
 
-LEGAL GROUNDING (priority order — use 1 first, then 2, then 3):
+LEGAL GROUNDING (priority order — use 1 first, then 2, etc.):
 1. RETRIEVED STATUTES (most authoritative):{rag_block}
-2. GGUF SPECIALIST:{specialist_block}
+2. GGUF SPECIALIST:{specialist_block}{doc_block}
 3. Web context: {web_ctx_short}
 
 CRITICAL CITATION RULE: When citing a retrieved statute, write its exact [section_ref] ID (e.g. [BNSS_50], [CONST_22], [IPC_498A]). This enables source verification. Never cite section numbers you have not seen in the retrieved statutes above.

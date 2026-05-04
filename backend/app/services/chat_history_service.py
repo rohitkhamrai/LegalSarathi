@@ -242,6 +242,17 @@ class ChatHistoryService:
         ai_response is the full dict returned by the orchestrator.
         Returns (user_msg_row, ai_msg_row).
         """
+        # Use buddy_text (spoken form) as primary content.
+        # Fall back to situation_summary for structured responses,
+        # or response for doc-chat responses.
+        ai_content = (
+            ai_response.get("buddy_text")
+            or ai_response.get("situation_summary")
+            or ai_response.get("response")  # doc-chat endpoint
+            or ""
+        )
+        print(f"[HISTORY] save_turn session={session_id[:8]} user_len={len(user_text)} ai_len={len(ai_content)}")
+
         user_msg = self.save_message(
             user_id=user_id,
             session_id=session_id,
@@ -252,7 +263,7 @@ class ChatHistoryService:
             user_id=user_id,
             session_id=session_id,
             role="ai",
-            content=ai_response.get("buddy_text", ""),
+            content=ai_content,
             legal_keys=ai_response.get("legal_keys", []),
             severity_level=ai_response.get("severity_level"),
             rights=ai_response.get("rights", []),

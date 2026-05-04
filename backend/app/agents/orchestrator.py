@@ -76,17 +76,24 @@ class Orchestrator:
         if not self.rag_service.is_ready:
             print("[RAG] Not ready — run ingest_corpus.py to build index")
 
-    async def process_query(self, text: str, lang: str = "hi", pinned_history: list = None, conversation_history: list = None):
+    async def process_query(self, text: str, lang: str = "hi", pinned_history: list = None, conversation_history: list = None, doc_context: str = "", session_summary: str = ""):
         if not text or not text.strip():
             from fastapi import HTTPException
             raise HTTPException(status_code=422, detail="Query cannot be empty.")
 
         # ── Pinned History Context Injection ──────────────────────────────────
+        prefix_context = []
         if pinned_history:
             # We prepend a summary of the pinned session to the query
             # to give the model immediate context without bloating prompt
             pinned_summary = "\n".join([f"{m['role']}: {m['content'][:200]}" for m in pinned_history[-5:]])
-            text = f"CONTEXT FROM PINNED SESSION:\n{pinned_summary}\n\nUSER CURRENT QUERY: {text}"
+            prefix_context.append(f"CONTEXT FROM PINNED SESSION:\n{pinned_summary}")
+
+        if session_summary:
+            prefix_context.append(f"EARLIER IN THIS SESSION:\n{session_summary}")
+        
+        if prefix_context:
+            text = "\n\n".join(prefix_context) + f"\n\nUSER CURRENT QUERY: {text}"
 
 
         # ── LRU Cache check (skip for multi-turn — context-dependent) ─────────
@@ -176,6 +183,7 @@ class Orchestrator:
             specialist_opinion=gguf_result,
             rag_context=rag_context,
             conversation_history=conversation_history or [],
+            doc_context=doc_context,
         )
         t_synthesis = time.time() - t0
         print(f"[LATENCY] Groq Synthesis: {t_synthesis:.3f}s")

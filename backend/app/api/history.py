@@ -71,6 +71,8 @@ async def create_session(
         )
         return {"session": session}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -102,6 +104,8 @@ async def list_sessions(
             page_size=page_size,
         )
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -8,13 +8,13 @@ _p1 = Path(__file__).resolve().parents[2] / ".env"
 _p2 = Path(__file__).resolve().parents[1] / ".env"
 _p3 = Path.cwd() / ".env"
 if _p1.exists():
-    load_dotenv(dotenv_path=str(_p1))
+    load_dotenv(dotenv_path=str(_p1), override=True)
 elif _p2.exists():
-    load_dotenv(dotenv_path=str(_p2))
+    load_dotenv(dotenv_path=str(_p2), override=True)
 elif _p3.exists():
-    load_dotenv(dotenv_path=str(_p3))
+    load_dotenv(dotenv_path=str(_p3), override=True)
 else:
-    load_dotenv()
+    load_dotenv(override=True)
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
@@ -30,10 +30,14 @@ from app.services.ocr_service import OCRService
 from app.services.document_generation_service import DocumentGenerationService
 from app.middleware.auth import get_optional_user
 from app.services.chat_history_service import ChatHistoryService
+from app.services.summarization_service import SummarizationService
+from app.services.document_memory_service import DocumentMemoryService
 from app.api.history import router as history_router
 from jinja2 import TemplateNotFound
 
 _chat_history_svc = ChatHistoryService()
+_summarization_svc = SummarizationService()
+_doc_memory_svc = DocumentMemoryService()  # embed model lazy-loaded on first use
 
 orchestrator = None
 voice_service = None
@@ -105,7 +109,7 @@ class TTSRequest(BaseModel):
     lang: str = "hi"
 
 class DocChatRequest(BaseModel):
-    doc_id: str
+    doc_id: str = ""           # optional: ID of a previously ingested document
     extracted_text: str
     message: str
     mode: str = "qa"           # summary|qa|clause_extract|translate|draft_reply
@@ -136,35 +140,67 @@ async def process_legal_query(req: QueryRequest, request: Request):
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator service is still initializing or failed to load.")
 
+    # ── Context Retrieval (Docs + Summaries) ────────────────────────────────
+    user = await get_optional_user(request)
+    doc_context = ""
+    session_summary = ""
+
+    if user and user.get("user_id"):
+        uid = user["user_id"]
+        # Fetch document chunks relevant to the query
+        doc_context = _doc_memory_svc.retrieve(
+            query=req.query,
+            user_id=uid,
+            session_id=req.session_id if req.session_id else None,
+            top_k=4
+        )
+        # Fetch existing long-term session summary
+        if req.session_id:
+            session_summary = _summarization_svc.get_summary(req.session_id)
+
     result = await orchestrator.process_query(
         text=req.query,
         lang=req.language,
         pinned_history=req.pinned_history if req.pinned_history else None,
         conversation_history=req.conversation_history if req.conversation_history else None,
+        doc_context=doc_context,
+        session_summary=session_summary,
     )
 
-    # ── Auto-save to history for authenticated users ──────────────────────────
-    # This is fire-and-forget: history save failure NEVER breaks the AI response.
+    # ── Auto-save + memory pipeline for authenticated users ─────────────────
+    # Fire-and-forget: history/summary failures NEVER break the AI response.
     if req.session_id:
         try:
             user = await get_optional_user(request)
             if user and user.get("user_id"):
+                uid = user["user_id"]
+
+                # 1. Fetch session summary to inject into future prompts
+                #    (already in DB from previous summarizations — no extra call needed here)
+
+                # 2. Save this turn
                 _chat_history_svc.save_turn(
-                    user_id=user["user_id"],
+                    user_id=uid,
                     session_id=req.session_id,
                     user_text=req.query,
                     ai_response=result,
                 )
                 print(f"[HISTORY] Saved turn to session {req.session_id}")
-                # Auto-title the session from the first message (if title is still default)
+
+                # 3. Auto-title session from first message
                 if not req.conversation_history:
                     _chat_history_svc.update_session_title_from_first_message(
-                        user_id=user["user_id"],
+                        user_id=uid,
                         session_id=req.session_id,
                         first_message=req.query,
                     )
+
+                # 4. Trigger background summarizer (no-op unless threshold hit)
+                _summarization_svc.maybe_summarize(
+                    session_id=req.session_id,
+                    language=req.language,
+                )
         except Exception as e:
-            # History save is non-critical — log and continue
             print(f"[HISTORY] Auto-save failed (non-fatal): {e}")
 
     return result
@@ -186,6 +222,64 @@ async def doc_chat(req: DocChatRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Document Memory Endpoints ─────────────────────────────────────────────────
+
+@app.post("/api/documents/ingest")
+async def ingest_document(
+    request: Request,
+    file: UploadFile = File(...),
+    session_id: str = Form(default=""),
+    lang: str = Form(default="en"),
+):
+    """
+    Upload a document (PDF / image). Extracts text via OCR, chunks, embeds, and
+    stores in Supabase for future RAG retrieval in this user's sessions.
+    Requires a valid JWT (authenticated users only).
+    """
+    user = await get_optional_user(request)
+    if not user or not user.get("user_id"):
+        raise HTTPException(status_code=401, detail="Authentication required to upload documents")
+    try:
+        file_bytes = await file.read()
+        doc_id = _doc_memory_svc.ingest(
+            file_bytes=file_bytes,
+            filename=file.filename or "upload",
+            user_id=user["user_id"],
+            session_id=session_id or None,
+            lang=lang,
+        )
+        return {"doc_id": doc_id, "filename": file.filename, "status": "ingested"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/documents/user")
+async def list_user_documents(request: Request, session_id: str = ""):
+    """List all documents ingested by the authenticated user (optionally scoped to session)."""
+    user = await get_optional_user(request)
+    if not user or not user.get("user_id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    docs = _doc_memory_svc.list_documents(
+        user_id=user["user_id"],
+        session_id=session_id or None,
+    )
+    return {"documents": docs}
+
+
+@app.delete("/api/documents/{doc_id}")
+async def delete_user_document(doc_id: str, request: Request):
+    """Delete a user document and all its chunks."""
+    user = await get_optional_user(request)
+    if not user or not user.get("user_id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    deleted = _doc_memory_svc.delete_document(doc_id, user["user_id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+    return {"deleted": True, "doc_id": doc_id}
 
 
 # ── OCR Endpoints ─────────────────────────────────────────────────────────────
