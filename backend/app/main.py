@@ -155,6 +155,7 @@ async def process_legal_query(req: QueryRequest, request: Request):
                     user_text=req.query,
                     ai_response=result,
                 )
+                print(f"[HISTORY] Saved turn to session {req.session_id}")
                 # Auto-title the session from the first message (if title is still default)
                 if not req.conversation_history:
                     _chat_history_svc.update_session_title_from_first_message(
