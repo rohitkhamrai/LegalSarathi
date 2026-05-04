@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from "react";
 import { useLocation } from "react-router-dom";
-import { Mic, Paperclip, Send, X, Volume2, Square, Pause, Play } from "lucide-react";
+import { Mic, Paperclip, Send, X, Volume2, Square, Pause, Play, History } from "lucide-react";
 import { ScreenShell } from "@/components/layout/ScreenShell";
 import { StickyHeader } from "@/components/layout/StickyHeader";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -12,6 +12,8 @@ import { CHAT_RESPONSES, matchTopic, type ChatTopic } from "@/data/chatResponses
 import { TRANSLATIONS } from "@/i18n/translations";
 import { detectUrgency } from "@/lib/urgency";
 import { cn } from "@/lib/utils";
+import { useChatHistory } from "@/hooks/useChatHistory";
+import { ChatHistoryPanel } from "@/components/chat/ChatHistoryPanel";
 
 interface Msg {
   id: string;
@@ -50,6 +52,24 @@ const Chat = () => {
   const [chatHistory, setChatHistory] = useState<{role: string; content: string}[]>([]);
   const [typing, setTyping] = useState(false);
   const [urgent, setUrgent] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [searchResults, setSearchResults] = useState<{id: string; session_id: string; content: string; created_at: string}[]>([]);
+
+  // Chat history persistence (silently no-ops for guests)
+  const {
+    sessions,
+    activeSessionId,
+    loading: historyLoading,
+    setActiveSessionId,
+    createSession,
+    saveTurn,
+    loadMessages,
+    renameSession,
+    togglePin,
+    deleteSession,
+    searchMessages,
+  } = useChatHistory();
+
   // Tracks the OCR-extracted text of the currently active document.
   // When set, follow-up queries go to /api/doc-chat instead of /api/query.
   const [activeDocText, setActiveDocText] = useState<string | null>(null);
@@ -440,7 +460,7 @@ const Chat = () => {
     }
   };
 
-  const replyTo = async (userText: string) => {
+  const replyTo = async (userText: string, sessionId?: string) => {
     setTyping(true);
     try {
       // If a document is loaded, use the doc-chat endpoint (document-aware AI)
@@ -477,6 +497,7 @@ const Chat = () => {
         body: JSON.stringify({
           query: userText,
           language: lang,
+          session_id: sessionId ?? activeSessionId ?? "",
           conversation_history: chatHistory.slice(-6),
         })
       });
@@ -505,12 +526,15 @@ const Chat = () => {
           citationBadge: data.citation_badge,
         },
       ]);
-      // Keep a rolling window of the last 6 turns for context chaining
+      // Keep a rolling window for multi-turn context
       setChatHistory((h) => [
         ...h,
         { role: "user", content: userText },
         { role: "assistant", content: aiText },
-      ].slice(-12)); // 12 entries = 6 user+assistant pairs
+      ].slice(-12));
+      // Persist the turn to Supabase (no-op for guests)
+      const sid = sessionId ?? activeSessionId;
+      if (sid) saveTurn(sid, userText, data);
     } catch (err) {
       setMsgs((m) => [
         ...m,
@@ -521,7 +545,7 @@ const Chat = () => {
     }
   };
 
-  const send = (raw: string) => {
+  const send = async (raw: string) => {
     const text = raw.trim();
     if (!text) return;
     if (!tryConsume()) return;
@@ -529,11 +553,57 @@ const Chat = () => {
     setInput("");
     if (detectUrgency(text)) {
       setUrgent(true);
-      // Auto-open SOS after a brief moment so the user sees the banner first
       window.setTimeout(() => showSOS(), 600);
     }
-    replyTo(text);
+    // Auto-create a session on the very first message of each conversation
+    let sid = activeSessionId;
+    if (!sid) {
+      sid = await createSession(lang);
+    }
+    replyTo(text, sid ?? undefined);
   };
+
+  // Restore a past session into the current chat view
+  const loadHistorySession = useCallback(async (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setShowHistory(false);
+    setMsgs([]);
+    setChatHistory([]);
+    setActiveDocText(null);
+    setActiveDocName(null);
+    const messages = await loadMessages(sessionId);
+    const restored: Msg[] = messages.map((m) => ({
+      id: m.id,
+      role: m.role as "user" | "ai",
+      text: m.content,
+      severityLevel: m.severity_level as "INFO" | "CAUTION" | "DANGER" | undefined,
+      rights: m.rights ?? [],
+      actionSteps: m.action_steps ?? [],
+      citationBadge: m.citation_badge,
+      lawChip: m.legal_keys?.[0],
+    }));
+    setMsgs(restored);
+    // Rebuild rolling context from the last 6 turns
+    const contextWindow = messages.slice(-12).map((m) => ({
+      role: m.role === "ai" ? "assistant" : "user",
+      content: m.content,
+    }));
+    setChatHistory(contextWindow);
+  }, [activeSessionId, loadMessages, setActiveSessionId]);
+
+  const startNewChat = useCallback(() => {
+    setActiveSessionId(null);
+    setMsgs([]);
+    setChatHistory([]);
+    setActiveDocText(null);
+    setActiveDocName(null);
+    setShowHistory(false);
+  }, [setActiveSessionId]);
+
+  const handleHistorySearch = useCallback(async (q: string) => {
+    const results = await searchMessages(q);
+    setSearchResults(results);
+  }, [searchMessages]);
 
   // Seed initial query / voice from navigation state (run once)
   useEffect(() => {
@@ -625,7 +695,46 @@ const Chat = () => {
 
   return (
     <ScreenShell>
-      <StickyHeader title={t("chatTitle")} showBack showLanguagePill />
+      {/* History sidebar drawer */}
+      {showHistory && (
+        <>
+          <div
+            className="fixed inset-0 z-30 bg-foreground/40 backdrop-blur-sm"
+            onClick={() => setShowHistory(false)}
+          />
+          <div className="fixed left-0 top-0 bottom-0 w-72 z-40 shadow-2xl">
+            <ChatHistoryPanel
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              loading={historyLoading}
+              onSelect={loadHistorySession}
+              onNew={startNewChat}
+              onRename={renameSession}
+              onPin={togglePin}
+              onDelete={deleteSession}
+              onSearch={handleHistorySearch}
+              searchResults={searchResults}
+              onClose={() => setShowHistory(false)}
+            />
+          </div>
+        </>
+      )}
+
+      <StickyHeader
+        title={t("chatTitle")}
+        showBack
+        showLanguagePill
+        rightAction={
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            title="Chat History"
+            aria-label="Chat History"
+          >
+            <History size={18} />
+          </button>
+        }
+      />
       <div className="px-6 py-2 text-xs text-muted-foreground">{t("chatSubtitle")}</div>
 
       {urgent && (
