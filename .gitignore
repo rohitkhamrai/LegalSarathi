@@ -48,11 +48,19 @@ indictrans2*/
 
 # Frontend (Node/Next.js)
 frontend/node_modules/
+backend/node_modules/
+node_modules/
 frontend/.next/
 frontend/out/
 frontend/build/
 frontend/dist/
 .next/
+
+# Artifacts & Temporary Files
+LegalSarathi-conversational-context.zip
+LegalSarathi_Spec.docx
+context_update/
+LegalSarathi-conversational-context/
 
 # IDEs and Editors
 .vscode/
