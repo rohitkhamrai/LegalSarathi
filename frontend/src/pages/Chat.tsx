@@ -463,11 +463,17 @@ const Chat = () => {
   const replyTo = async (userText: string, sessionId?: string) => {
     setTyping(true);
     try {
+      // Get token for authentication
+      const raw = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+      const token = raw ? JSON.parse(localStorage.getItem(raw) || "{}")?.access_token : null;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       // If a document is loaded, use the doc-chat endpoint (document-aware AI)
       if (activeDocText) {
         const res = await fetch("/api/doc-chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             extracted_text: activeDocText,
             message: userText,
@@ -493,7 +499,7 @@ const Chat = () => {
       // No document active — use standard RAG pipeline
       const res = await fetch("/api/query", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           query: userText,
           language: lang,
