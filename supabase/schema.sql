@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     is_pinned         boolean     DEFAULT false,
     pinned_at         timestamptz,
     pinned_session_id uuid        REFERENCES chat_sessions ON DELETE SET NULL,
+    summary           text        DEFAULT NULL,        -- compressed memory of older turns
+    message_count     integer     DEFAULT 0,           -- tracks when to trigger summarizer
     created_at        timestamptz DEFAULT now(),
     expires_at        timestamptz NOT NULL
 );
@@ -39,6 +41,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     rights         jsonb       DEFAULT '[]',
     action_steps   jsonb       DEFAULT '[]',
     citation_badge text,
+    summarized     boolean     DEFAULT false,           -- true once absorbed into session summary
     created_at     timestamptz DEFAULT now()
 );
 
@@ -74,6 +77,27 @@ CREATE TABLE IF NOT EXISTS user_events (
     created_at timestamptz DEFAULT now()
 );
 
+-- ── Document Memory (OCR / PDF uploads) ───────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS user_documents (
+    id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      uuid        REFERENCES profiles ON DELETE CASCADE NOT NULL,
+    session_id   uuid        REFERENCES chat_sessions ON DELETE SET NULL,
+    filename     text        NOT NULL,
+    raw_text     text,                                 -- first 50K chars of extracted text
+    created_at   timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    doc_id       uuid        REFERENCES user_documents ON DELETE CASCADE NOT NULL,
+    user_id      uuid        REFERENCES profiles ON DELETE CASCADE NOT NULL,
+    chunk_index  integer     NOT NULL,
+    content      text        NOT NULL,
+    embedding    vector(384),                          -- must match EMBEDDING_MODEL dim
+    created_at   timestamptz DEFAULT now()
+);
+
 -- ── 2. Auto-create profile on signup (trigger) ────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -102,13 +126,17 @@ ALTER TABLE chat_messages     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE doc_chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_events       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_documents    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_chunks   ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Own profile"    ON profiles          FOR ALL USING (auth.uid() = id);
-CREATE POLICY "Own sessions"   ON chat_sessions     FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Own messages"   ON chat_messages     FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Own documents"  ON documents         FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Own doc chats"  ON doc_chat_messages FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Own events"     ON user_events       FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own profile"       ON profiles          FOR ALL USING (auth.uid() = id);
+CREATE POLICY "Own sessions"      ON chat_sessions     FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own messages"      ON chat_messages     FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own documents"     ON documents         FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own doc chats"     ON doc_chat_messages FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own events"        ON user_events       FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own user_docs"     ON user_documents    FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Own doc_chunks"    ON document_chunks   FOR ALL USING (auth.uid() = user_id);
 
 -- ── 4. pg_cron — 11-day data purge (runs at 2AM daily) ───────────────────────
 -- NOTE: Enable the pg_cron extension first via Supabase Dashboard → Extensions
@@ -158,4 +186,22 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_time
 -- Messages: full-text search support (GIN index on content)
 CREATE INDEX IF NOT EXISTS idx_chat_messages_content_fts
     ON chat_messages USING gin(to_tsvector('english', content));
+
+-- Messages: fast lookup of unsummarized messages per session
+CREATE INDEX IF NOT EXISTS idx_chat_messages_unsummarized
+    ON chat_messages (session_id, summarized, created_at ASC);
+
+-- Document chunks: vector similarity search (ivfflat, 50 lists suitable for <500K rows)
+-- NOTE: Requires pgvector extension: CREATE EXTENSION IF NOT EXISTS vector;
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_embedding
+    ON document_chunks USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 50);
+
+-- Document chunks: user-scoped retrieval
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_user
+    ON document_chunks (user_id);
+
+-- Document chunks: doc-scoped retrieval
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc
+    ON document_chunks (doc_id, chunk_index ASC);
 
