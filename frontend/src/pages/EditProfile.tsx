@@ -11,14 +11,16 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const EditProfile = () => {
   const { t, meta } = useLanguage();
-  const { phone } = useAuth();
-  const [name, setName] = useState("Priya Desai");
-  const [email, setEmail] = useState("priya@example.com");
-  const [city, setCity] = useState("Bengaluru");
+  const { profile, phone } = useAuth();
+  const [name, setName] = useState(profile.name || "");
+  const [email, setEmail] = useState(profile.email || "");
+  const [city, setCity] = useState(profile.state || "");
   const [dirty, setDirty] = useState(false);
   const [toast, setToast] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const initials = (name || "User").trim().split(/\s+/).map((s) => s[0]).join("").slice(0, 2).toUpperCase() || "U";
 
   const onChange = <T,>(setter: (v: T) => void) => (v: T) => {
     setter(v);
@@ -54,7 +56,7 @@ const EditProfile = () => {
       <div className="px-6 pt-4 pb-32 space-y-5">
         <div className="flex justify-center">
           <div className="relative">
-            <div className="w-20 h-20 rounded-full bg-primary text-primary-foreground text-2xl font-semibold flex items-center justify-center">PD</div>
+            <div className="w-20 h-20 rounded-full bg-primary text-primary-foreground text-2xl font-semibold flex items-center justify-center">{initials}</div>
             <button aria-label="Change photo" className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-card border border-border flex items-center justify-center">
               <Camera size={16} />
             </button>
