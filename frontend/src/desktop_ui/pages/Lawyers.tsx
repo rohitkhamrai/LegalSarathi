@@ -1,112 +1,251 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { MapPin, Search, SlidersHorizontal, Star, Video, CheckCircle2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { ExternalLink, MapPin, Search, ChevronDown, X, Scale } from "lucide-react";
 import { ScreenShell } from "@desktop/components/layout/ScreenShell";
 import { StickyHeader } from "@desktop/components/layout/StickyHeader";
-import { Button } from "@desktop/components/common/Button";
 import { useLanguage } from "@desktop/contexts/LanguageContext";
-import { LAWYERS, type Lawyer } from "@desktop/data/lawyers";
-import { VideoCallModal } from "@desktop/components/lawyer/VideoCallModal";
+import {
+  CITIES,
+  CATEGORY_META,
+  LAWYER_CARDS,
+  buildLawratoUrl,
+  buildVakilSearchUrl,
+  type LawyerCategory,
+  type LawyerCard,
+} from "@desktop/data/lawyers";
 import { cn } from "@desktop/lib/utils";
 
-const CATEGORIES = ["catAll", "catProperty", "catCriminal", "catFamily", "catLabour", "catConsumer", "catStartup"] as const;
+const ALL_CATEGORIES = Object.keys(CATEGORY_META) as LawyerCategory[];
 
 const Lawyers = () => {
   const { t } = useLanguage();
-  const navigate = useNavigate();
-  const [active, setActive] = useState<string>("catAll");
-  const [videoLawyer, setVideoLawyer] = useState<Lawyer | null>(null);
 
-  const filtered = LAWYERS;
+  const [selectedCity, setSelectedCity] = useState<string>("bangalore");
+  const [selectedCategory, setSelectedCategory] = useState<LawyerCategory | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
+
+  const filtered = useMemo(() => {
+    return LAWYER_CARDS.filter((card) => {
+      if (card.citySlug !== selectedCity) return false;
+      if (selectedCategory && card.category !== selectedCategory) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          card.category.toLowerCase().includes(q) ||
+          card.highlight.toLowerCase().includes(q) ||
+          CATEGORY_META[card.category].description.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [selectedCity, selectedCategory, searchQuery]);
+
+  const handleOpenLawrato = (card: LawyerCard) => {
+    window.open(buildLawratoUrl(card.citySlug, card.category), "_blank", "noopener,noreferrer");
+  };
+
+  const handleOpenVakilSearch = (card: LawyerCard) => {
+    window.open(buildVakilSearchUrl(card.citySlug, card.category), "_blank", "noopener,noreferrer");
+  };
+
+  const handleExploreAll = () => {
+    window.open(buildLawratoUrl(selectedCity, selectedCategory), "_blank", "noopener,noreferrer");
+  };
 
   return (
     <ScreenShell>
       <StickyHeader title={t("findLawyer")} showLanguagePill />
-      <div className="px-8 pt-6 pb-10 max-w-6xl">
-        {/* Search + location row */}
-        <div className="flex items-center gap-4 mb-5">
-          <span className="ls-chip bg-primary/5 text-primary border-primary/20 shrink-0">
-            <MapPin size={13} /> Bengaluru, KA
-          </span>
-          <div className="flex-1 flex items-center gap-2 ls-card h-11 px-4">
-            <Search size={16} className="text-muted-foreground shrink-0" />
-            <input className="flex-1 bg-transparent text-sm outline-none" placeholder={t("searchLawyers")} />
-            <button className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center" aria-label="Filter">
-              <SlidersHorizontal size={15} />
+
+      <div className="px-8 pt-6 pb-12 max-w-6xl space-y-5">
+
+        {/* Top bar: city selector + search */}
+        <div className="flex items-center gap-4">
+          {/* City dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setCityDropdownOpen((v) => !v)}
+              className="flex items-center gap-2 ls-card h-11 px-4 text-sm font-medium min-w-[160px]"
+            >
+              <MapPin size={14} className="text-primary shrink-0" />
+              <span className="flex-1 text-left">{CITIES[selectedCity]}</span>
+              <ChevronDown size={14} className={cn("text-muted-foreground transition-transform", cityDropdownOpen && "rotate-180")} />
             </button>
+
+            {cityDropdownOpen && (
+              <div className="absolute top-12 left-0 z-30 w-64 bg-card border border-border rounded-2xl shadow-xl overflow-hidden">
+                <div className="p-2 grid grid-cols-2 gap-1 max-h-64 overflow-y-auto">
+                  {Object.entries(CITIES).map(([slug, label]) => (
+                    <button
+                      key={slug}
+                      onClick={() => { setSelectedCity(slug); setCityDropdownOpen(false); }}
+                      className={cn(
+                        "py-2 px-3 rounded-xl text-sm font-medium text-left transition-colors tap",
+                        selectedCity === slug
+                          ? "bg-primary text-primary-foreground"
+                          : "hover:bg-muted text-foreground"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Search */}
+          <div className="flex-1 flex items-center gap-2 ls-card h-11 px-4">
+            <Search size={15} className="text-muted-foreground shrink-0" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1 bg-transparent text-sm outline-none"
+              placeholder={t("searchLawyers")}
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery("")}>
+                <X size={14} className="text-muted-foreground" />
+              </button>
+            )}
+          </div>
+
+          {/* Explore all */}
+          <button
+            onClick={handleExploreAll}
+            className="flex items-center gap-2 h-11 px-5 rounded-button bg-primary text-primary-foreground text-sm font-semibold tap whitespace-nowrap"
+          >
+            <ExternalLink size={14} />
+            All {CITIES[selectedCity]} Lawyers
+          </button>
         </div>
 
         {/* Category chips */}
-        <div className="flex gap-2 flex-wrap mb-6">
-          {CATEGORIES.map((k) => (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setSelectedCategory(null)}
+            className={cn(
+              "ls-chip whitespace-nowrap tap",
+              !selectedCategory ? "bg-primary text-primary-foreground border-primary" : ""
+            )}
+          >
+            {t("catAll")}
+          </button>
+          {ALL_CATEGORIES.map((cat) => (
             <button
-              key={k}
-              onClick={() => setActive(k)}
+              key={cat}
+              onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
               className={cn(
-                "ls-chip whitespace-nowrap tap",
-                active === k ? "bg-primary text-primary-foreground border-primary" : ""
+                "ls-chip whitespace-nowrap tap gap-1.5",
+                selectedCategory === cat ? "bg-primary text-primary-foreground border-primary" : ""
               )}
             >
-              {t(k as never)}
+              <span>{CATEGORY_META[cat].icon}</span>
+              {CATEGORY_META[cat].label}
             </button>
           ))}
         </div>
 
-        {/* Lawyer cards grid */}
-        <div className="grid grid-cols-2 gap-4">
-          {filtered.map((l) => (
-            <article key={l.id} className="ls-card p-5">
-              <div className="flex items-start gap-4">
-                <div className="w-14 h-14 rounded-full bg-primary/10 text-primary font-semibold text-lg flex items-center justify-center shrink-0">
-                  {l.initials}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <button onClick={() => navigate(`/lawyers/${l.id}`)} className="text-left">
-                    <h3 className="font-display font-semibold text-base leading-tight">{l.name}</h3>
-                  </button>
-                  <p className="inline-flex items-center gap-1 text-[11px] text-success font-medium mt-0.5">
-                    <CheckCircle2 size={12} /> {t("barCouncilVerified")}
-                  </p>
-                  <p className="text-accent font-bold text-sm mt-1">₹{l.fee}<span className="text-[10px] font-normal text-muted-foreground">/30min</span></p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                {l.specialisations.map((s) => (
-                  <span key={s} className="text-[10px] px-2 py-0.5 rounded-md bg-muted text-foreground font-medium">{s}</span>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
-                <span className="inline-flex items-center gap-1"><Star size={12} className="text-accent fill-accent" /> {l.rating} ({l.reviews})</span>
-                <span>·</span>
-                <span>{l.area ? `${l.area}, ` : ""}{l.city}</span>
-              </div>
-
-              <p className="text-[11px] mt-1.5 font-native text-foreground/80">
-                {l.languages.join(" · ")}
-              </p>
-
-              <p className="text-[11px] inline-flex items-center gap-1.5 mt-1.5 text-success">
-                <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                {l.availability === "today" ? t("availableToday") : t("availableTomorrow")}
-              </p>
-
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <Button className="h-10 text-xs" onClick={() => navigate(`/lawyers/${l.id}`)}>
-                  {t("bookConsultation")}
-                </Button>
-                <Button variant="secondary" className="h-10 text-xs" leftIcon={<Video size={14} />} onClick={() => setVideoLawyer(l)}>
-                  {t("videoCall")}
-                </Button>
-              </div>
-            </article>
-          ))}
+        {/* Info banner */}
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 flex items-center gap-3">
+          <Scale size={15} className="text-primary shrink-0" />
+          <p className="text-xs text-foreground/75 leading-relaxed">
+            Profiles sourced from <span className="font-semibold text-primary">Lawrato.com</span> &amp; <span className="font-semibold text-primary">VakilSearch.com</span> — India's top verified lawyer directories. Clicking a card opens the live listing filtered to your city and legal area.
+          </p>
         </div>
-      </div>
 
-      <VideoCallModal lawyer={videoLawyer} onClose={() => setVideoLawyer(null)} />
+        {/* Cards grid */}
+        {filtered.length === 0 ? (
+          <div className="text-center py-20 text-muted-foreground">
+            <div className="text-4xl mb-4">🔍</div>
+            <p className="text-sm">No results in {CITIES[selectedCity]} for that filter.</p>
+            <button
+              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+              className="mt-4 text-primary text-xs underline"
+            >
+              Clear filters
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              {filtered.map((card) => {
+                const meta = CATEGORY_META[card.category];
+                return (
+                  <article key={card.id} className="ls-card p-5 space-y-3 flex flex-col">
+                    {/* Header */}
+                    <div className="flex items-start gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-2xl shrink-0">
+                        {card.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-display font-semibold text-base leading-snug">
+                          {meta.label} Lawyers
+                        </h3>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                          <MapPin size={10} /> {card.displayCity}
+                          <span className="mx-1">·</span>
+                          <span className="font-semibold text-primary">{card.lawyerCount} lawyers</span>
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                          ★ {card.ratingRange}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Highlight */}
+                    <p className="text-xs text-foreground/75 leading-relaxed border-l-2 border-primary/30 pl-3">
+                      {card.highlight}
+                    </p>
+
+                    {/* Tags + fee */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] bg-muted text-foreground font-medium px-2 py-0.5 rounded-md">
+                        {meta.description}
+                      </span>
+                      <span className="ml-auto text-[11px] text-muted-foreground font-medium">
+                        {card.avgFee}
+                      </span>
+                    </div>
+
+                    {/* CTAs */}
+                    <div className="grid grid-cols-2 gap-2 mt-auto pt-1">
+                      <button
+                        onClick={() => handleOpenLawrato(card)}
+                        className="flex items-center justify-center gap-1.5 h-9 rounded-button bg-primary text-primary-foreground text-xs font-semibold tap"
+                      >
+                        <ExternalLink size={12} />
+                        View on Lawrato
+                      </button>
+                      <button
+                        onClick={() => handleOpenVakilSearch(card)}
+                        className="flex items-center justify-center gap-1.5 h-9 rounded-button border border-border text-foreground text-xs font-medium tap hover:border-primary/50"
+                      >
+                        <ExternalLink size={12} />
+                        VakilSearch
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            {/* Explore all */}
+            <button
+              onClick={handleExploreAll}
+              className="w-full h-14 rounded-2xl border-2 border-dashed border-primary/30 text-primary font-medium flex items-center justify-center gap-2 tap hover:bg-primary/5 transition-colors"
+            >
+              <ExternalLink size={16} />
+              Browse all {CITIES[selectedCity]} lawyers on Lawrato
+            </button>
+          </>
+        )}
+
+        <p className="text-[10px] text-muted-foreground text-center">
+          LegalSarathi connects you to Lawrato.com & VakilSearch.com, independent platforms. Always verify credentials before engaging a lawyer.
+        </p>
+      </div>
     </ScreenShell>
   );
 };
