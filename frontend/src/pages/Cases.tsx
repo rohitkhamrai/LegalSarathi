@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { FileText, MessageSquare, Plus, ScrollText } from "lucide-react";
+import { FileText, MessageSquare, Plus, ScrollText, ExternalLink } from "lucide-react";
 import { ScreenShell } from "@/components/layout/ScreenShell";
 import { StickyHeader } from "@/components/layout/StickyHeader";
 import { Button } from "@/components/common/Button";
@@ -28,8 +28,31 @@ const Cases = () => {
     <ScreenShell>
       <StickyHeader title={t("myCasesTitle")} showBack showLanguagePill />
       <div className="px-6 pt-4 pb-8">
+        
+        {/* eCourts Portal Redirect Card */}
+        <div className="mb-6 ls-card p-4 bg-primary/5 border border-primary/20">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+              <ExternalLink size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-display font-semibold text-sm leading-tight text-foreground">Official eCourts Portal</h3>
+              <p className="text-xs text-muted-foreground mt-1 mb-3 leading-relaxed">
+                Check official case progress, hearing dates, and court details directly via CNR number.
+              </p>
+              <Button 
+                size="sm" 
+                className="w-full"
+                onClick={() => window.open("https://services.ecourts.gov.in/ecourtindia_v6/", "_blank")}
+              >
+                Check Case Status
+              </Button>
+            </div>
+          </div>
+        </div>
+
         {cases.length === 0 ? (
-          <div className="text-center py-16">
+          <div className="text-center py-12">
             <div className="w-16 h-16 rounded-full bg-muted text-muted-foreground flex items-center justify-center mx-auto">
               <ScrollText size={28} />
             </div>
