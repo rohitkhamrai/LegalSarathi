@@ -21,7 +21,6 @@ export const SideNav = () => {
     { to: "/cases", label: t("navCases"), Icon: Briefcase },
     { to: "/documents", label: t("navDocs"), Icon: FileText },
     { to: "/lawyers", label: t("navLawyers"), Icon: Scale },
-    { to: "/community", label: t("navCommunity"), Icon: Users },
     { to: "/chat", label: t("aiChatbot"), Icon: MessageCircle },
   ];
 
