@@ -109,9 +109,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // ── Fetch Supabase profile ────────────────────────────────────────────────
 
-  const fetchProfile = useCallback(async (userId: string, email?: string) => {
+  const fetchProfile = useCallback(async (authUser: User) => {
     // BACKDOOR: Force premium for test user
-    if (email === 'chrisfds2407@gmail.com') {
+    if (authUser.email === 'chrisfds2407@gmail.com') {
       setIsPremiumState(true);
       setProfileState({
         name: 'Test Admin',
@@ -124,17 +124,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', userId)
+      .eq('id', authUser.id)
       .single();
     if (error) {
       console.warn('[AuthContext] Profile fetch error:', error.message);
       return;
     }
+
+    let finalName = data.name;
+    // Auto-fill name from OAuth (Google) if it's missing in the profiles table
+    if (!finalName && authUser.user_metadata?.full_name) {
+      finalName = authUser.user_metadata.full_name;
+      // Silently sync it to the database so it persists
+      supabase.from('profiles').update({ name: finalName }).eq('id', authUser.id).then();
+    }
+
     setSupabaseProfile(data as Profile);
-    if (email !== 'chrisfds2407@gmail.com') setIsPremiumState(data.is_premium ?? false);
+    if (authUser.email !== 'chrisfds2407@gmail.com') setIsPremiumState(data.is_premium ?? false);
     
     setProfileState({
-      name: data.name ?? 'User',
+      name: finalName || 'User',
       state: data.state ?? '',
       interests: data.interests ?? [],
     });
@@ -147,14 +156,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
-      if (session?.user) fetchProfile(session.user.id, session.user.email);
+      if (session?.user) fetchProfile(session.user);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id, session.user.email);
+        fetchProfile(session.user);
         // Clear guest mode if user logs in
         setIsGuest(false);
         setGuestName(null);
@@ -180,7 +189,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: window.location.href,
       },
     });
     if (error) throw new Error(error.message);
@@ -193,7 +202,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       type: 'email',
     });
     if (error) throw new Error(error.message);
-    if (data.user) await fetchProfile(data.user.id, data.user.email);
+    if (data.user) await fetchProfile(data.user);
   }, [fetchProfile]);
 
   const logout = useCallback(async () => {
@@ -214,7 +223,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .update(data)
       .eq('id', user.id);
     if (error) throw new Error(error.message);
-    await fetchProfile(user.id);
+    await fetchProfile(user);
   }, [user, fetchProfile]);
 
   // ── Guest mode ────────────────────────────────────────────────────────────

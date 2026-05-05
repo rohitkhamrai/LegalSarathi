@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/common/Button';
@@ -16,7 +16,14 @@ const Login = () => {
   const [sending, setSending] = useState(false);
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const { login, loginWithGoogle, loginAsGuest, onboardingComplete } = useAuth();
+  const { login, loginWithGoogle, loginAsGuest, onboardingComplete, isAuthenticated } = useAuth();
+
+  // Auto-redirect if authenticated (e.g. after OAuth callback)
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate(onboardingComplete ? '/home' : '/onboarding-form', { replace: true });
+    }
+  }, [isAuthenticated, onboardingComplete, navigate]);
 
   const submitEmail = async () => {
     if (!email.includes('@')) return;
