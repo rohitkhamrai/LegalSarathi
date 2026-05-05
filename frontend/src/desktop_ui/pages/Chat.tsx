@@ -54,6 +54,10 @@ const Chat = () => {
   // When set, follow-up queries go to /api/doc-chat instead of /api/query.
   const [activeDocText, setActiveDocText] = useState<string | null>(null);
   const [activeDocName, setActiveDocName] = useState<string | null>(null);
+
+  // Pending file: staged for send but not yet processed (ChatGPT-style attachment chip)
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const seededRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -445,15 +449,22 @@ const Chat = () => {
     try {
       // If a document is loaded, use the doc-chat endpoint (document-aware AI)
       if (activeDocText) {
+        const rawKey = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+        const token = rawKey ? JSON.parse(localStorage.getItem(rawKey) || "{}")?.access_token : null;
+        const hdrs: Record<string, string> = { "Content-Type": "application/json" };
+        if (token) hdrs["Authorization"] = `Bearer ${token}`;
+
         const res = await fetch("/api/doc-chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: hdrs,
           body: JSON.stringify({
             extracted_text: activeDocText,
             message: userText,
+            user_text: userText,
             mode: "qa",
             history: msgs.filter(m => m.role !== "ai" || m.ocrExtractedText == null).slice(-6).map(m => ({ role: m.role, content: m.text })),
             language: lang,
+            session_id: "",  // desktop has no session tracking — backend skips save if empty
           })
         });
         if (!res.ok) throw new Error("Doc-chat API failed");
@@ -521,18 +532,80 @@ const Chat = () => {
     }
   };
 
-  const send = (raw: string) => {
+  const send = async (raw: string) => {
     const text = raw.trim();
-    if (!text) return;
+    if (!text && !pendingFile) return;
     if (!tryConsume()) return;
-    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text }]);
+
+    const userDisplayText = pendingFile ? text || `What does this document say?` : text;
+    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: pendingFile ? `📎 ${pendingFile.name}${text ? ` — ${text}` : ""}` : userDisplayText }]);
     setInput("");
-    if (detectUrgency(text)) {
+
+    if (detectUrgency(userDisplayText)) {
       setUrgent(true);
-      // Auto-open SOS after a brief moment so the user sees the banner first
       window.setTimeout(() => showSOS(), 600);
     }
-    replyTo(text);
+
+    if (pendingFile) {
+      const file = pendingFile;
+      setPendingFile(null);
+      setTyping(true);
+      try {
+        const ocrFd = new FormData();
+        ocrFd.append("image", file);
+        ocrFd.append("lang", lang);
+        const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: ocrFd });
+        if (!ocrRes.ok) throw new Error("OCR failed");
+        const ocrData = await ocrRes.json();
+        const extractedText: string = ocrData.extracted_text || "";
+        if (!extractedText) throw new Error("No text could be extracted.");
+
+        const rawKey = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+        const token = rawKey ? JSON.parse(localStorage.getItem(rawKey) || "{}")?.access_token : null;
+        if (token) {
+          const ingestFd = new FormData();
+          ingestFd.append("file", file);
+          ingestFd.append("session_id", "");
+          ingestFd.append("lang", lang);
+          fetch("/api/documents/ingest", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: ingestFd,
+          }).catch(() => {});
+        }
+
+        setActiveDocText(extractedText);
+        setActiveDocName(file.name);
+
+        const chatRes = await fetch("/api/doc-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) },
+          body: JSON.stringify({
+            extracted_text: extractedText,
+            message: userDisplayText,
+            user_text: userDisplayText,
+            mode: "qa",
+            history: [],
+            language: lang,
+            session_id: "",  // desktop has no session tracking
+          }),
+        });
+        const chatData = chatRes.ok ? await chatRes.json() : null;
+        setMsgs((m) => [...m, {
+          id: crypto.randomUUID(), role: "ai",
+          text: chatData?.response || "Document processed. Ask me anything about it.",
+          topic: "legal", ocrExtractedText: extractedText,
+        }]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "ai", text: `⚠️ Could not process document: ${msg}` }]);
+      } finally {
+        setTyping(false);
+      }
+      return;
+    }
+
+    replyTo(userDisplayText);
   };
 
   // Seed initial query / voice from navigation state (run once)
@@ -569,67 +642,9 @@ const Chat = () => {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!tryConsume()) return;
-
-    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 ${file.name}` }]);
-    setTyping(true);
-
-    try {
-      // ── Step 1: OCR ────────────────────────────────────────────────────────
-      const ocrFd = new FormData();
-      ocrFd.append("image", file);
-      ocrFd.append("lang", lang);
-      const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: ocrFd });
-      if (!ocrRes.ok) throw new Error("OCR failed");
-      const ocrData = await ocrRes.json();
-      const extractedText: string = ocrData.extracted_text || "";
-      if (!extractedText) throw new Error("No text could be extracted from the document.");
-
-      // ── Step 2: Silent ingest — chunk + embed + store ──────────────────────
-      const raw = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
-      const token = raw ? JSON.parse(localStorage.getItem(raw) || "{}")?.access_token : null;
-      if (token) {
-        const ingestFd = new FormData();
-        ingestFd.append("file", file);
-        ingestFd.append("session_id", "");
-        ingestFd.append("lang", lang);
-        fetch("/api/documents/ingest", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: ingestFd,
-        }).then((r) => {
-          if (!r.ok) console.warn("[INGEST] failed:", r.status);
-          else console.info("[INGEST] Document indexed successfully");
-        }).catch((e) => console.warn("[INGEST] error:", e));
-      }
-
-      // ── Step 3: Local state fallback for same-session doc-chat ─────────────
-      setActiveDocText(extractedText);
-      setActiveDocName(file.name);
-
-      // ── Step 4: Minimal ACK only — no AI summary until user asks ───────────
-      const wordEst = Math.round(extractedText.length / 5);
-      setMsgs((m) => [
-        ...m,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: `📄 **${file.name}** has been uploaded and indexed (~${wordEst} words extracted).\n\nYou can now ask me anything about it — I'll reference it automatically in my answers.`,
-          topic: "legal",
-          ocrExtractedText: extractedText,
-        },
-      ]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      setMsgs((m) => [...m, {
-        id: crypto.randomUUID(),
-        role: "ai",
-        text: `⚠️ Could not process document: ${msg}. Please ensure it's a clear image or PDF.`,
-      }]);
-    } finally {
-      setTyping(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    // Just stage the file — do NOT process yet
+    setPendingFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   return (
@@ -889,25 +904,44 @@ const Chat = () => {
 
       <div className="fixed bottom-16 left-0 right-0 bg-background/95 backdrop-blur border-t border-border z-20">
         <div className="max-w-md mx-auto px-4 py-2">
-          <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2">
-            {suggestions.map((s) => (
-              <button key={s.label} onClick={() => send(s.q)} className="ls-chip whitespace-nowrap text-xs tap">
-                {s.label}
-              </button>
-            ))}
-          </div>
+          {!pendingFile && (
+            <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2">
+              {suggestions.map((s) => (
+                <button key={s.label} onClick={() => send(s.q)} className="ls-chip whitespace-nowrap text-xs tap">
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {pendingFile && (
+            <div className="flex items-center gap-2 mb-1.5 px-1">
+              <div className="flex items-center gap-2 bg-primary/10 border border-primary/25 rounded-xl px-3 py-1.5 flex-1 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
+                  <span className="text-sm">📄</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground truncate">{pendingFile.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{pendingFile.type.includes("pdf") ? "PDF" : "Image"} · Ready</p>
+                </div>
+                <button
+                  onClick={() => setPendingFile(null)}
+                  className="ml-auto shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive transition-colors"
+                  aria-label="Remove attachment"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2 ls-card h-12 px-2">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileSelect}
-              accept="image/*,.pdf"
-              className="hidden"
-            />
-            <button 
-              aria-label="Attach" 
+            <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,.pdf" className="hidden" />
+            <button
+              aria-label="Attach"
               onClick={() => fileInputRef.current?.click()}
-              className="w-9 h-9 flex items-center justify-center text-muted-foreground tap"
+              className={cn(
+                "w-9 h-9 flex items-center justify-center tap transition-colors",
+                pendingFile ? "text-primary" : "text-muted-foreground"
+              )}
             >
               <Paperclip size={18} />
             </button>
@@ -916,7 +950,7 @@ const Chat = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
               className="flex-1 bg-transparent text-sm outline-none"
-              placeholder={t("askQuestion")}
+              placeholder={pendingFile ? "Ask anything about this document…" : t("askQuestion")}
               aria-label={t("askQuestion")}
             />
             <button aria-label="Voice" onClick={() => setVoice(true)} className="w-9 h-9 flex items-center justify-center text-primary tap">
@@ -925,7 +959,7 @@ const Chat = () => {
             <button
               aria-label="Send"
               onClick={() => send(input)}
-              disabled={!input.trim()}
+              disabled={!input.trim() && !pendingFile}
               className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center tap disabled:opacity-40"
             >
               <Send size={16} />
