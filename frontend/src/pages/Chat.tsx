@@ -44,7 +44,7 @@ const Chat = () => {
   const { show: showSOS } = useSOS();
   const location = useLocation();
   const navigate = useNavigate();
-  const initialState = location.state as { initialQuery?: string; startVoice?: boolean } | null;
+  const initialState = location.state as { initialQuery?: string; startVoice?: boolean; sessionId?: string } | null;
 
   const [voice, setVoice] = useState(false);
   const [input, setInput] = useState("");
@@ -715,11 +715,13 @@ const Chat = () => {
     setSearchResults(results);
   }, [searchMessages]);
 
-  // Seed initial query / voice from navigation state (run once)
+  // Seed initial query / voice / past session from navigation state (run once)
   useEffect(() => {
     if (seededRef.current) return;
     seededRef.current = true;
-    if (initialState?.initialQuery) {
+    if (initialState?.sessionId) {
+      loadHistorySession(initialState.sessionId);
+    } else if (initialState?.initialQuery) {
       send(initialState.initialQuery);
     } else if (initialState?.startVoice) {
       setVoice(true);
