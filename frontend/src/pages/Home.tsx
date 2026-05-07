@@ -7,6 +7,7 @@ import { KnowYourRightsAccordion } from "@/components/home/KnowYourRightsAccordi
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useGuest } from "@/contexts/GuestContext";
+import { useChatHistory } from "@/hooks/useChatHistory";
 import { getLanguage } from "@/i18n/languages";
 
 const Home = () => {
@@ -14,6 +15,7 @@ const Home = () => {
   const { t, lang } = useLanguage();
   const { profile, guestName, isGuest } = useAuth();
   const { tryConsume } = useGuest();
+  const { sessions, loading: historyLoading } = useChatHistory();
   const [query, setQuery] = useState("");
 
   const today = new Intl.DateTimeFormat(getLanguage(lang).locale, {
@@ -114,16 +116,30 @@ const Home = () => {
             </button>
           </div>
           <div className="space-y-2">
-            {["Eviction notice from landlord", "RTI for ration card status"].map((q) => (
-              <button
-                key={q}
-                onClick={() => sendQuery(q)}
-                className="w-full text-left ls-card p-4 text-sm tap"
-              >
-                <p className="font-medium">{q}</p>
-                <p className="text-xs text-muted-foreground mt-1">2 days ago</p>
-              </button>
-            ))}
+            {historyLoading ? (
+              <div className="text-center text-xs text-muted-foreground py-4">Loading history...</div>
+            ) : sessions.length === 0 ? (
+              <div className="text-center text-xs text-muted-foreground py-4">No recent queries yet.</div>
+            ) : (
+              sessions.slice(0, 3).map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => navigate("/chat", { state: { sessionId: s.id } })}
+                  className="w-full text-left ls-card p-4 text-sm tap flex justify-between items-center"
+                >
+                  <div>
+                    <p className="font-medium line-clamp-1 pr-4">{s.title}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {new Date(s.created_at).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </p>
+                  </div>
+                  <ChevronRight size={16} className="text-muted-foreground shrink-0" />
+                </button>
+              ))
+            )}
           </div>
         </section>
       </div>
