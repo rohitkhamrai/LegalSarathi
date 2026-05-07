@@ -5,6 +5,7 @@ import { LanguageSwitcherPill } from "@desktop/components/language/LanguageSwitc
 import { LanguageSwitcherSheet } from "@desktop/components/language/LanguageSwitcherSheet";
 import { NotificationPanel } from "@desktop/components/notifications/NotificationPanel";
 import { useNotifications } from "@desktop/contexts/NotificationContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@desktop/lib/utils";
 
 interface Props {
@@ -35,6 +36,17 @@ export const StickyHeader = ({
   const [notifOpen, setNotifOpen] = useState(false);
   const navigate = useNavigate();
   const { unreadCount } = useNotifications();
+  const { profile, guestName, isGuest } = useAuth();
+
+  // Calculate initials dynamically based on the current user's profile
+  const getInitials = () => {
+    const name = (profile.name && profile.name.trim()) || (isGuest && guestName) || "Priya";
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  };
 
   return (
     <>
@@ -89,7 +101,7 @@ export const StickyHeader = ({
                 onClick={() => navigate("/profile")}
                 className="w-9 h-9 rounded-full bg-primary text-primary-foreground font-semibold text-xs flex items-center justify-center tap"
               >
-                PD
+                {getInitials()}
               </button>
             )}
             {rightAction}
