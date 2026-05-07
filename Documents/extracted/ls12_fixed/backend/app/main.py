@@ -115,8 +115,6 @@ class DocChatRequest(BaseModel):
     mode: str = "qa"           # summary|qa|clause_extract|translate|draft_reply
     history: list = []         # previous doc_chat_messages [{role, content}]
     language: str = "hi"
-    session_id: str = ""       # optional: persist this turn to the session
-    user_text: str = ""        # original user text (used for saving; falls back to message)
 
 class DocumentGenerationRequest(BaseModel):
     """Request model for document generation endpoints."""
@@ -209,7 +207,7 @@ async def process_legal_query(req: QueryRequest, request: Request):
 
 
 @app.post("/api/doc-chat")
-async def doc_chat(req: DocChatRequest, request: Request):
+async def doc_chat(req: DocChatRequest):
     """Document-specific chat. Bypasses RAG — extracted_text is the context."""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator service unavailable")
@@ -221,38 +219,9 @@ async def doc_chat(req: DocChatRequest, request: Request):
             history=req.history,
             lang=req.language,
         )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    # ── Auto-save for authenticated users with an active session ─────────────
-    # Fire-and-forget: failures must never break the AI response.
-    if req.session_id:
-        try:
-            user = await get_optional_user(request)
-            if user and user.get("user_id"):
-                uid = user["user_id"]
-                # The user_text to save: prefer explicit user_text, else use message
-                save_user_text = req.user_text.strip() or req.message
-
-                _chat_history_svc.save_turn(
-                    user_id=uid,
-                    session_id=req.session_id,
-                    user_text=save_user_text,
-                    ai_response=result,  # has 'response' key → picked up by save_turn fallback
-                )
-                print(f"[HISTORY] Doc-chat turn saved to session {req.session_id[:8]}")
-
-                # Auto-title from first message (only when no prior history)
-                if not req.history:
-                    _chat_history_svc.update_session_title_from_first_message(
-                        user_id=uid,
-                        session_id=req.session_id,
-                        first_message=save_user_text,
-                    )
-        except Exception as e:
-            print(f"[HISTORY] Doc-chat auto-save failed (non-fatal): {e}")
-
-    return result
 
 
 # ── Document Memory Endpoints ─────────────────────────────────────────────────
@@ -299,30 +268,6 @@ async def list_user_documents(request: Request, session_id: str = ""):
         session_id=session_id or None,
     )
     return {"documents": docs}
-
-
-@app.get("/api/documents/session/{session_id}")
-async def get_session_document(session_id: str, request: Request):
-    """Get the full raw text and filename of a document attached to a specific chat session."""
-    user = await get_optional_user(request)
-    if not user or not user.get("user_id"):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        from app.services.supabase_service import get_supabase_admin
-        sb = get_supabase_admin()
-        q = (
-            sb.table("user_documents")
-            .select("filename, raw_text")
-            .eq("user_id", user["user_id"])
-            .eq("session_id", session_id)
-            .limit(1)
-        )
-        res = q.execute().data
-        if res:
-            return res[0]
-        return {}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/documents/{doc_id}")

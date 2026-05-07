@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useLocation } from "react-router-dom";
-import { Mic, Paperclip, Send, X, Volume2, Square, Pause, Play, History } from "lucide-react";
+import { Mic, Paperclip, Send, X, Volume2, Square, Pause, Play } from "lucide-react";
 import { ScreenShell } from "@/components/layout/ScreenShell";
 import { StickyHeader } from "@/components/layout/StickyHeader";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -12,8 +12,6 @@ import { CHAT_RESPONSES, matchTopic, type ChatTopic } from "@/data/chatResponses
 import { TRANSLATIONS } from "@/i18n/translations";
 import { detectUrgency } from "@/lib/urgency";
 import { cn } from "@/lib/utils";
-import { useChatHistory } from "@/hooks/useChatHistory";
-import { ChatHistoryPanel } from "@/components/chat/ChatHistoryPanel";
 
 interface Msg {
   id: string;
@@ -52,32 +50,10 @@ const Chat = () => {
   const [chatHistory, setChatHistory] = useState<{role: string; content: string}[]>([]);
   const [typing, setTyping] = useState(false);
   const [urgent, setUrgent] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
-  const [searchResults, setSearchResults] = useState<{id: string; session_id: string; content: string; created_at: string}[]>([]);
-
-  // Chat history persistence (silently no-ops for guests)
-  const {
-    sessions,
-    activeSessionId,
-    loading: historyLoading,
-    setActiveSessionId,
-    createSession,
-    saveTurn,
-    loadMessages,
-    renameSession,
-    togglePin,
-    deleteSession,
-    searchMessages,
-  } = useChatHistory();
-
   // Tracks the OCR-extracted text of the currently active document.
   // When set, follow-up queries go to /api/doc-chat instead of /api/query.
   const [activeDocText, setActiveDocText] = useState<string | null>(null);
   const [activeDocName, setActiveDocName] = useState<string | null>(null);
-
-  // Pending file: staged for send but not yet processed (ChatGPT-style attachment chip)
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-
   const scrollRef = useRef<HTMLDivElement>(null);
   const seededRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -464,28 +440,20 @@ const Chat = () => {
     }
   };
 
-  const replyTo = async (userText: string, sessionId?: string) => {
+  const replyTo = async (userText: string) => {
     setTyping(true);
     try {
-      // Get token for authentication
-      const raw = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
-      const token = raw ? JSON.parse(localStorage.getItem(raw) || "{}")?.access_token : null;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
       // If a document is loaded, use the doc-chat endpoint (document-aware AI)
       if (activeDocText) {
         const res = await fetch("/api/doc-chat", {
           method: "POST",
-          headers,
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             extracted_text: activeDocText,
             message: userText,
-            user_text: userText,
             mode: "qa",
             history: msgs.filter(m => m.role !== "ai" || m.ocrExtractedText == null).slice(-6).map(m => ({ role: m.role, content: m.text })),
             language: lang,
-            session_id: sessionId ?? activeSessionId ?? "",
           })
         });
         if (!res.ok) throw new Error("Doc-chat API failed");
@@ -505,11 +473,10 @@ const Chat = () => {
       // No document active — use standard RAG pipeline
       const res = await fetch("/api/query", {
         method: "POST",
-        headers,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: userText,
           language: lang,
-          session_id: sessionId ?? activeSessionId ?? "",
           conversation_history: chatHistory.slice(-6),
         })
       });
@@ -538,13 +505,12 @@ const Chat = () => {
           citationBadge: data.citation_badge,
         },
       ]);
-      // Keep a rolling window for multi-turn context
+      // Keep a rolling window of the last 6 turns for context chaining
       setChatHistory((h) => [
         ...h,
         { role: "user", content: userText },
         { role: "assistant", content: aiText },
-      ].slice(-12));
-      // NOTE: persistence is handled server-side in main.py — no duplicate save needed here.
+      ].slice(-12)); // 12 entries = 6 user+assistant pairs
     } catch (err) {
       setMsgs((m) => [
         ...m,
@@ -555,165 +521,19 @@ const Chat = () => {
     }
   };
 
-  const send = async (raw: string) => {
+  const send = (raw: string) => {
     const text = raw.trim();
-    // Allow send when there's a pending file even without typed text
-    if (!text && !pendingFile) return;
+    if (!text) return;
     if (!tryConsume()) return;
-
-    const userDisplayText = pendingFile
-      ? text || `What does this document say?`
-      : text;
-
-    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: pendingFile ? `📎 ${pendingFile.name}${text ? ` — ${text}` : ""}` : userDisplayText }]);
+    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text }]);
     setInput("");
-
-    if (detectUrgency(userDisplayText)) {
+    if (detectUrgency(text)) {
       setUrgent(true);
+      // Auto-open SOS after a brief moment so the user sees the banner first
       window.setTimeout(() => showSOS(), 600);
     }
-
-    let sid = activeSessionId;
-    if (!sid) sid = await createSession(lang);
-
-    // If a file is staged, OCR it first then answer with the user's question
-    if (pendingFile) {
-      const file = pendingFile;
-      setPendingFile(null);
-      setTyping(true);
-      try {
-        // Step 1: OCR
-        const ocrFd = new FormData();
-        ocrFd.append("image", file);
-        ocrFd.append("lang", lang);
-        const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: ocrFd });
-        if (!ocrRes.ok) throw new Error("OCR failed");
-        const ocrData = await ocrRes.json();
-        const extractedText: string = ocrData.extracted_text || "";
-        if (!extractedText) throw new Error("No text could be extracted.");
-
-        // Step 2: Silent background ingest for future queries
-        const rawKey = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
-        const token = rawKey ? JSON.parse(localStorage.getItem(rawKey) || "{}")?.access_token : null;
-        if (token) {
-          const ingestFd = new FormData();
-          ingestFd.append("file", file);
-          ingestFd.append("session_id", sid ?? "");
-          ingestFd.append("lang", lang);
-          fetch("/api/documents/ingest", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-            body: ingestFd,
-          }).catch(() => {/* non-fatal */});
-        }
-
-        // Step 3: Store for follow-up queries
-        setActiveDocText(extractedText);
-        setActiveDocName(file.name);
-
-        // Step 4: Answer the user's question using the doc
-        const rawKey2 = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
-        const token2 = rawKey2 ? JSON.parse(localStorage.getItem(rawKey2) || "{}")?.access_token : null;
-        const hdrs: Record<string, string> = { "Content-Type": "application/json" };
-        if (token2) hdrs["Authorization"] = `Bearer ${token2}`;
-
-        const chatRes = await fetch("/api/doc-chat", {
-          method: "POST",
-          headers: hdrs,
-          body: JSON.stringify({
-            extracted_text: extractedText,
-            message: userDisplayText,
-            user_text: userDisplayText,
-            mode: "qa",
-            history: [],
-            language: lang,
-            session_id: sid ?? "",
-          }),
-        });
-        const chatData = chatRes.ok ? await chatRes.json() : null;
-        setMsgs((m) => [
-          ...m,
-          {
-            id: crypto.randomUUID(),
-            role: "ai",
-            text: chatData?.response || "Document processed. Ask me anything about it.",
-            topic: "legal",
-            ocrExtractedText: extractedText,
-          },
-        ]);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "ai", text: `⚠️ Could not process document: ${msg}` }]);
-      } finally {
-        setTyping(false);
-      }
-      return;
-    }
-
-    replyTo(userDisplayText, sid ?? undefined);
+    replyTo(text);
   };
-
-  // Restore a past session into the current chat view
-  const loadHistorySession = useCallback(async (sessionId: string) => {
-    setActiveSessionId(sessionId);
-    setShowHistory(false);
-    setMsgs([]);
-    setChatHistory([]);
-    setActiveDocText(null);
-    setActiveDocName(null);
-    const messages = await loadMessages(sessionId);
-    const restored: Msg[] = messages.map((m) => ({
-      id: m.id,
-      role: m.role as "user" | "ai",
-      text: m.content,
-      severityLevel: m.severity_level as "INFO" | "CAUTION" | "DANGER" | undefined,
-      rights: m.rights ?? [],
-      actionSteps: m.action_steps ?? [],
-      citationBadge: m.citation_badge,
-      lawChip: m.legal_keys?.[0],
-    }));
-    setMsgs(restored);
-    // Rebuild rolling context from the last 6 turns
-    const contextWindow = messages.slice(-12).map((m) => ({
-      role: m.role === "ai" ? "assistant" : "user",
-      content: m.content,
-    }));
-    setChatHistory(contextWindow);
-
-    // Restore document context if this was a doc-chat session
-    try {
-      const rawKey = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
-      const token = rawKey ? JSON.parse(localStorage.getItem(rawKey) || "{}")?.access_token : null;
-      if (token) {
-        const docRes = await fetch(`/api/documents/session/${sessionId}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (docRes.ok) {
-          const docData = await docRes.json();
-          if (docData.raw_text) {
-            setActiveDocText(docData.raw_text);
-            setActiveDocName(docData.filename || "Uploaded Document");
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Failed to restore document context", e);
-    }
-  }, [activeSessionId, loadMessages, setActiveSessionId]);
-
-  const startNewChat = useCallback(() => {
-    setActiveSessionId(null);
-    setMsgs([]);
-    setChatHistory([]);
-    setActiveDocText(null);
-    setActiveDocName(null);
-    setShowHistory(false);
-  }, [setActiveSessionId]);
-
-  const handleHistorySearch = useCallback(async (q: string) => {
-    const results = await searchMessages(q);
-    setSearchResults(results);
-  }, [searchMessages]);
 
   // Seed initial query / voice from navigation state (run once)
   useEffect(() => {
@@ -749,53 +569,72 @@ const Chat = () => {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Just stage the file — do NOT process yet
-    setPendingFile(file);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!tryConsume()) return;
+
+    setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `📎 ${file.name}` }]);
+    setTyping(true);
+
+    try {
+      // ── Step 1: OCR ────────────────────────────────────────────────────────
+      const ocrFd = new FormData();
+      ocrFd.append("image", file);
+      ocrFd.append("lang", lang);
+      const ocrRes = await fetch("/api/ocr-extract", { method: "POST", body: ocrFd });
+      if (!ocrRes.ok) throw new Error("OCR failed");
+      const ocrData = await ocrRes.json();
+      const extractedText: string = ocrData.extracted_text || "";
+      if (!extractedText) throw new Error("No text could be extracted from the document.");
+
+      // ── Step 2: Silent ingest — chunk + embed + store ──────────────────────
+      const raw = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+      const token = raw ? JSON.parse(localStorage.getItem(raw) || "{}")?.access_token : null;
+      if (token) {
+        const ingestFd = new FormData();
+        ingestFd.append("file", file);
+        ingestFd.append("session_id", "");
+        ingestFd.append("lang", lang);
+        fetch("/api/documents/ingest", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: ingestFd,
+        }).then((r) => {
+          if (!r.ok) console.warn("[INGEST] failed:", r.status);
+          else console.info("[INGEST] Document indexed successfully");
+        }).catch((e) => console.warn("[INGEST] error:", e));
+      }
+
+      // ── Step 3: Local state fallback for same-session doc-chat ─────────────
+      setActiveDocText(extractedText);
+      setActiveDocName(file.name);
+
+      // ── Step 4: Minimal ACK only — no AI summary until user asks ───────────
+      const wordEst = Math.round(extractedText.length / 5);
+      setMsgs((m) => [
+        ...m,
+        {
+          id: crypto.randomUUID(),
+          role: "ai",
+          text: `📄 **${file.name}** has been uploaded and indexed (~${wordEst} words extracted).\n\nYou can now ask me anything about it — I'll reference it automatically in my answers.`,
+          topic: "legal",
+          ocrExtractedText: extractedText,
+        },
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setMsgs((m) => [...m, {
+        id: crypto.randomUUID(),
+        role: "ai",
+        text: `⚠️ Could not process document: ${msg}. Please ensure it's a clear image or PDF.`,
+      }]);
+    } finally {
+      setTyping(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   return (
     <ScreenShell>
-      {/* History sidebar drawer */}
-      {showHistory && (
-        <>
-          <div
-            className="fixed inset-0 z-30 bg-foreground/40 backdrop-blur-sm"
-            onClick={() => setShowHistory(false)}
-          />
-          <div className="fixed left-0 top-0 bottom-0 w-72 z-40 shadow-2xl">
-            <ChatHistoryPanel
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              loading={historyLoading}
-              onSelect={loadHistorySession}
-              onNew={startNewChat}
-              onRename={renameSession}
-              onPin={togglePin}
-              onDelete={deleteSession}
-              onSearch={handleHistorySearch}
-              searchResults={searchResults}
-              onClose={() => setShowHistory(false)}
-            />
-          </div>
-        </>
-      )}
-
-      <StickyHeader
-        title={t("chatTitle")}
-        showBack
-        showLanguagePill
-        rightAction={
-          <button
-            onClick={() => setShowHistory((v) => !v)}
-            className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-            title="Chat History"
-            aria-label="Chat History"
-          >
-            <History size={18} />
-          </button>
-        }
-      />
+      <StickyHeader title={t("chatTitle")} showBack showLanguagePill />
       <div className="px-6 py-2 text-xs text-muted-foreground">{t("chatSubtitle")}</div>
 
       {urgent && (
@@ -1050,40 +889,13 @@ const Chat = () => {
 
       <div className="fixed bottom-16 left-0 right-0 bg-background/95 backdrop-blur border-t border-border z-20">
         <div className="max-w-md mx-auto px-4 py-2">
-          {/* Suggestion chips — hidden when a file is staged */}
-          {!pendingFile && (
-            <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2">
-              {suggestions.map((s) => (
-                <button key={s.label} onClick={() => send(s.q)} className="ls-chip whitespace-nowrap text-xs tap">
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Pending file chip — shown above input once a file is staged */}
-          {pendingFile && (
-            <div className="flex items-center gap-2 mb-1.5 px-1">
-              <div className="flex items-center gap-2 bg-primary/10 border border-primary/25 rounded-xl px-3 py-1.5 flex-1 min-w-0">
-                <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
-                  <span className="text-sm">📄</span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-foreground truncate">{pendingFile.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{pendingFile.type.includes("pdf") ? "PDF" : "Image"} · Ready</p>
-                </div>
-                <button
-                  onClick={() => setPendingFile(null)}
-                  className="ml-auto shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive transition-colors"
-                  aria-label="Remove attachment"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Input bar */}
+          <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2">
+            {suggestions.map((s) => (
+              <button key={s.label} onClick={() => send(s.q)} className="ls-chip whitespace-nowrap text-xs tap">
+                {s.label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-2 ls-card h-12 px-2">
             <input
               type="file"
@@ -1092,13 +904,10 @@ const Chat = () => {
               accept="image/*,.pdf"
               className="hidden"
             />
-            <button
-              aria-label="Attach"
+            <button 
+              aria-label="Attach" 
               onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "w-9 h-9 flex items-center justify-center tap transition-colors",
-                pendingFile ? "text-primary" : "text-muted-foreground"
-              )}
+              className="w-9 h-9 flex items-center justify-center text-muted-foreground tap"
             >
               <Paperclip size={18} />
             </button>
@@ -1107,7 +916,7 @@ const Chat = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
               className="flex-1 bg-transparent text-sm outline-none"
-              placeholder={pendingFile ? "Ask anything about this document…" : t("askQuestion")}
+              placeholder={t("askQuestion")}
               aria-label={t("askQuestion")}
             />
             <button aria-label="Voice" onClick={() => setVoice(true)} className="w-9 h-9 flex items-center justify-center text-primary tap">
@@ -1116,7 +925,7 @@ const Chat = () => {
             <button
               aria-label="Send"
               onClick={() => send(input)}
-              disabled={!input.trim() && !pendingFile}
+              disabled={!input.trim()}
               className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center tap disabled:opacity-40"
             >
               <Send size={16} />
