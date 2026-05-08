@@ -5,6 +5,12 @@ import platform
 def check_hw():
     print(f"OS: {platform.system()} {platform.release()}")
     print(f"Processor: {platform.processor()}")
+    try:
+        import psutil
+        ram_gb = round(psutil.virtual_memory().total / (1024**3), 2)
+        print(f"RAM: {ram_gb} GB")
+    except ImportError:
+        print("RAM: Install 'psutil' to check memory size")
     
     # Check for NVIDIA GPU
     try:
