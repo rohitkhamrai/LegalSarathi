@@ -70,8 +70,8 @@ The application will be available at: **http://localhost:8080**
 
 ---
 
-## Performance Notes for 16GB Machine
-- **First OCR Upload**: The system uses **PaddleOCR**. It will download ~80-100MB of model data for the selected language on first use. This may take 30-60 seconds.
-- **First Rerank**: The CrossEncoder model (23MB) will load on the first query.
-- **Memory**: The system is optimized for CPU. The idle system uses ~500MB. During OCR+RAG processing, it may spike to 2GB total, well within your 16GB limit.
+## 💡 Performance Notes for 16GB Machine
+- **⚡ First OCR Upload**: The system uses **PaddleOCR**. It will download ~80-100MB of model data for the selected language on first use. This may take 30-60 seconds.
+- **🔍 First Rerank**: The CrossEncoder model (23MB) will load on the first query.
+- **💾 Memory Usage**: The system is highly optimized for CPU. The idle system uses ~500MB. During OCR+RAG processing, it may spike to 2GB total, well within your 16GB limit.
 
