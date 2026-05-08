@@ -5,7 +5,15 @@ from pathlib import Path
 load_dotenv(dotenv_path=str(Path(__file__).parent / ".env"))
 url = os.getenv("NEON_DATABASE_URL", "")
 
-conn = psycopg2.connect(url)
+if not url:
+    print("❌ Error: NEON_DATABASE_URL is not set in .env file.")
+    sys.exit(1)
+
+try:
+    conn = psycopg2.connect(url)
+except Exception as e:
+    print(f"❌ Error connecting to database: {e}")
+    sys.exit(1)
 cur = conn.cursor()
 
 # Enable pgvector
