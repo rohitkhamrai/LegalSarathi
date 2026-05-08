@@ -148,7 +148,7 @@ const Home = () => {
 };
 
 const ActionTile = ({ bg, text, icon, label, onClick }: { bg: string; text: string; icon: React.ReactNode; label: string; onClick?: () => void }) => (
-  <button onClick={onClick} className={`tap text-left rounded-2xl ${bg} ${text} p-4 h-28 flex flex-col justify-between shadow-card`}>
+  <button onClick={onClick} className={`tap text-left rounded-2xl ${bg} ${text} p-4 h-28 flex flex-col justify-between shadow-card hover:scale-[1.02] active:scale-[0.98] transition-all duration-200`}>
     <span className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">{icon}</span>
     <span className="text-sm font-display font-semibold leading-tight">{label}</span>
   </button>
