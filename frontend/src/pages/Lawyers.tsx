@@ -1,12 +1,12 @@
 import { useState, useMemo } from "react";
-import { ExternalLink, MapPin, Search, ChevronDown, X, Scale } from "lucide-react";
+import { ExternalLink, MapPin, Search, ChevronDown, X, Scale, Phone, Mail, Globe, Building2, CheckCircle2 } from "lucide-react";
 import { ScreenShell } from "@/components/layout/ScreenShell";
 import { StickyHeader } from "@/components/layout/StickyHeader";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
   CITIES,
   CATEGORY_META,
-  LAWYER_CARDS,
+  LAWYERS,
   buildLawratoUrl,
   buildVakilSearchUrl,
   type LawyerCategory,
@@ -24,24 +24,24 @@ const Lawyers = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
 
-  // Filter cards by city + category + search
-  const filtered = useMemo(() => {
-    return LAWYER_CARDS.filter((card) => {
-      if (card.citySlug !== selectedCity) return false;
-      if (selectedCategory && card.category !== selectedCategory) return false;
+  // Filter individual lawyers by city + category + search
+  const filteredLawyers = useMemo(() => {
+    return LAWYERS.filter((lawyer) => {
+      if (lawyer.citySlug !== selectedCity) return false;
+      if (selectedCategory && !lawyer.categories.includes(selectedCategory)) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
-          card.category.toLowerCase().includes(q) ||
-          card.highlight.toLowerCase().includes(q) ||
-          CATEGORY_META[card.category].description.toLowerCase().includes(q)
+          lawyer.firm_name.toLowerCase().includes(q) ||
+          lawyer.practice_area.toLowerCase().includes(q) ||
+          (lawyer.area && lawyer.area.toLowerCase().includes(q))
         );
       }
       return true;
     });
   }, [selectedCity, selectedCategory, searchQuery]);
 
-  const handleOpenLawrato = (card: LawyerCard) => {
+  const handleOpenLawrato = () => {
     const url = buildLawratoUrl(card.citySlug, card.category);
     window.open(url, "_blank", "noopener,noreferrer");
   };
@@ -147,7 +147,7 @@ const Lawyers = () => {
         </div>
 
         {/* Cards */}
-        {filtered.length === 0 ? (
+        {filteredLawyers.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground text-sm">
             <div className="text-3xl mb-3">🔍</div>
             <p>No results in {CITIES[selectedCity]} for that filter.</p>
@@ -160,67 +160,89 @@ const Lawyers = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {filtered.map((card) => {
-              const meta = CATEGORY_META[card.category];
-              return (
-                <article key={card.id} className="ls-card p-4 space-y-3">
-                  {/* Header */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center text-xl shrink-0">
-                      {card.icon}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-display font-semibold text-[15px] leading-snug">
-                        {meta.label} Lawyers
-                      </h3>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                        <MapPin size={10} /> {card.displayCity}
-                        <span className="mx-1">·</span>
-                        <span className="font-semibold text-primary">{card.lawyerCount} lawyers</span>
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                        ★ {card.ratingRange}
-                      </div>
-                    </div>
+            {filteredLawyers.map((lawyer) => (
+              <article key={lawyer.id} className="ls-card p-4 space-y-3">
+                {/* Header */}
+                <div className="flex items-start gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center text-xl shrink-0">
+                    👨‍⚖️
                   </div>
-
-                  {/* Highlight */}
-                  <p className="text-xs text-foreground/75 leading-relaxed border-l-2 border-primary/30 pl-2.5">
-                    {card.highlight}
-                  </p>
-
-                  {/* Fee + category tag */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] bg-muted text-foreground font-medium px-2 py-0.5 rounded-md">
-                      {meta.description}
-                    </span>
-                    <span className="ml-auto text-[11px] text-muted-foreground font-medium">
-                      {card.avgFee} / consultation
-                    </span>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-display font-semibold text-[15px] leading-snug text-primary">
+                      {lawyer.firm_name}
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                      <MapPin size={10} /> {lawyer.area || CITIES[selectedCity]}
+                      {lawyer.verified && (
+                        <span className="text-green-500 font-medium flex items-center gap-0.5 ml-1">
+                          <CheckCircle2 size={10} /> Verified
+                        </span>
+                      )}
+                    </p>
                   </div>
+                </div>
 
-                  {/* CTA buttons */}
-                  <div className="grid grid-cols-2 gap-2 pt-1">
+                {/* Categories */}
+                <div className="flex flex-wrap gap-1">
+                  {lawyer.categories.map((cat: string) => (
+                    <span key={cat} className="text-[10px] bg-primary/10 text-primary font-medium px-2 py-0.5 rounded-md">
+                      {cat}
+                    </span>
+                  ))}
+                </div>
+
+                {/* Highlight */}
+                <p className="text-xs text-foreground/75 leading-relaxed border-l-2 border-primary/30 pl-2.5">
+                  <strong>Practice:</strong> {lawyer.practice_area}
+                </p>
+
+                {/* Contact Info */}
+                <div className="grid grid-cols-1 gap-1.5 text-[11px] text-muted-foreground">
+                  {lawyer.phone && lawyer.phone !== "N/A" && (
+                    <div className="flex items-center gap-2"><Phone size={11} /> {lawyer.phone} {lawyer.phone_2 ? `/ ${lawyer.phone_2}` : ''}</div>
+                  )}
+                  {lawyer.email && lawyer.email !== "N/A" && (
+                    <div className="flex items-center gap-2"><Mail size={11} /> {lawyer.email}</div>
+                  )}
+                  {lawyer.office_address && lawyer.office_address !== "N/A" && (
+                    <div className="flex items-start gap-2"><Building2 size={11} className="mt-0.5 shrink-0" /> <span className="line-clamp-2">{lawyer.office_address}</span></div>
+                  )}
+                </div>
+
+                {/* CTA buttons */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {lawyer.website && lawyer.website !== "N/A" ? (
                     <button
-                      onClick={() => handleOpenLawrato(card)}
+                      onClick={() => window.open(lawyer.website, "_blank")}
                       className="flex items-center justify-center gap-1.5 h-10 rounded-button bg-primary text-primary-foreground text-xs font-semibold tap"
                     >
-                      <ExternalLink size={13} />
-                      View on Lawrato
+                      <Globe size={13} />
+                      Website
                     </button>
+                  ) : (
+                    <button disabled className="flex items-center justify-center gap-1.5 h-10 rounded-button bg-muted text-muted-foreground/50 text-xs font-semibold">
+                      <Globe size={13} />
+                      No Website
+                    </button>
+                  )}
+                  
+                  {lawyer.google_maps_link && lawyer.google_maps_link !== "N/A" ? (
                     <button
-                      onClick={() => handleOpenVakilSearch(card)}
+                      onClick={() => window.open(lawyer.google_maps_link, "_blank")}
                       className="flex items-center justify-center gap-1.5 h-10 rounded-button border border-border text-foreground text-xs font-medium tap hover:border-primary/50"
                     >
-                      <ExternalLink size={13} />
-                      VakilSearch
+                      <MapPin size={13} />
+                      Map
                     </button>
-                  </div>
-                </article>
-              );
-            })}
+                  ) : (
+                    <button disabled className="flex items-center justify-center gap-1.5 h-10 rounded-button border border-border/50 text-foreground/50 text-xs font-medium">
+                      <MapPin size={13} />
+                      No Map
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
 
             {/* Explore all CTA */}
             <button
@@ -228,7 +250,7 @@ const Lawyers = () => {
               className="w-full h-12 rounded-2xl border-2 border-dashed border-primary/30 text-primary text-sm font-medium flex items-center justify-center gap-2 tap hover:bg-primary/5 transition-colors"
             >
               <ExternalLink size={15} />
-              Browse all {CITIES[selectedCity]} lawyers on Lawrato
+              Browse more {CITIES[selectedCity]} lawyers on Lawrato
             </button>
           </div>
         )}
