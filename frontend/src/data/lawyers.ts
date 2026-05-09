@@ -39,6 +39,15 @@ export const DAY_SLOTS: Record<DayKey, SlotInfo[]> = {
 // Lawrato slug → display label
 export const CITIES: Record<string, string> = {
   "bangalore":  "Bengaluru",
+  "mysore":     "Mysuru",
+  "hubli":      "Hubballi-Dharwad",
+  "mangalore":  "Mangaluru",
+  "belgaum":    "Belagavi",
+  "gulbarga":   "Kalaburagi (Gulbarga)",
+  "davangere":  "Davanagere",
+  "bellary":    "Ballari (Bellary)",
+  "shimoga":    "Shivamogga",
+  "tumkur":     "Tumakuru",
   "mumbai":     "Mumbai",
   "delhi":      "Delhi",
   "hyderabad":  "Hyderabad",
@@ -157,17 +166,18 @@ export const LAWYER_CARDS: LawyerCard[] = [
 ];
 
 import bangaloreLawyersData from './bangalore_lawyers.json';
+import karnatakaLawyersData from './karnataka_10cities_lawyers.json';
 
 function getCategories(practiceArea: string): LawyerCategory[] {
   const cats: LawyerCategory[] = [];
   const lower = practiceArea.toLowerCase();
-  if (lower.includes('property') || lower.includes('real estate') || lower.includes('civil')) cats.push('Property');
-  if (lower.includes('criminal') || lower.includes('bail') || lower.includes('cyber')) cats.push('Criminal');
-  if (lower.includes('family') || lower.includes('divorce') || lower.includes('matrimonial')) cats.push('Family');
+  if (lower.includes('property') || lower.includes('real estate') || lower.includes('civil') || lower.includes('revenue') || lower.includes('land')) cats.push('Property');
+  if (lower.includes('criminal') || lower.includes('bail') || lower.includes('cyber') || lower.includes('crime')) cats.push('Criminal');
+  if (lower.includes('family') || lower.includes('divorce') || lower.includes('matrimonial') || lower.includes('marriage')) cats.push('Family');
   if (lower.includes('labour') || lower.includes('employment')) cats.push('Labour');
   if (lower.includes('consumer')) cats.push('Consumer');
   if (lower.includes('women') || lower.includes('domestic violence') || lower.includes('pocso')) cats.push('Women');
-  if (lower.includes('startup') || lower.includes('corporate') || lower.includes('ip') || lower.includes('patent')) cats.push('Startup');
+  if (lower.includes('startup') || lower.includes('corporate') || lower.includes('ip') || lower.includes('patent') || lower.includes('company')) cats.push('Startup');
   if (lower.includes('rti')) cats.push('RTI');
   
   // fallback if none matched
@@ -175,8 +185,30 @@ function getCategories(practiceArea: string): LawyerCategory[] {
   return Array.from(new Set(cats));
 }
 
-export const LAWYERS = bangaloreLawyersData.map(l => ({
+function getCitySlug(city: string): string {
+  const c = city.toLowerCase();
+  if (c.includes('mysuru') || c.includes('mysore')) return 'mysore';
+  if (c.includes('hubballi') || c.includes('dharwad') || c.includes('hubli')) return 'hubli';
+  if (c.includes('mangaluru') || c.includes('mangalore')) return 'mangalore';
+  if (c.includes('belagavi') || c.includes('belgaum')) return 'belgaum';
+  if (c.includes('kalaburagi') || c.includes('gulbarga')) return 'gulbarga';
+  if (c.includes('davanagere') || c.includes('davangere')) return 'davangere';
+  if (c.includes('ballari') || c.includes('bellary')) return 'bellary';
+  if (c.includes('shivamogga') || c.includes('shimoga')) return 'shimoga';
+  if (c.includes('tumakuru') || c.includes('tumkur')) return 'tumkur';
+  return 'bangalore';
+}
+
+const mappedBangalore = bangaloreLawyersData.map(l => ({
   ...l,
   categories: getCategories(l.practice_area),
   citySlug: "bangalore",
 }));
+
+const mappedKarnataka = (karnatakaLawyersData.lawyers || []).map((l: any) => ({
+  ...l,
+  categories: getCategories(l.practice_area),
+  citySlug: getCitySlug(l.city || ''),
+}));
+
+export const LAWYERS = [...mappedBangalore, ...mappedKarnataka];
