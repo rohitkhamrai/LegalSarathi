@@ -156,5 +156,27 @@ export const LAWYER_CARDS: LawyerCard[] = [
   { id: "jai-prop",  citySlug: "jaipur",     category: "Property",  displayCity: "Jaipur",    ratingRange: "3.9 – 4.6", lawyerCount: "90+",  avgFee: "₹500 – ₹2,500",   highlight: "JDA disputes, agricultural land, registry", icon: "🏠" },
 ];
 
-// ─── Compatibility shim ───────────────────────────────────────────────────────
-export const LAWYERS: Lawyer[] = [];
+import bangaloreLawyersData from './bangalore_lawyers.json';
+
+function getCategories(practiceArea: string): LawyerCategory[] {
+  const cats: LawyerCategory[] = [];
+  const lower = practiceArea.toLowerCase();
+  if (lower.includes('property') || lower.includes('real estate') || lower.includes('civil')) cats.push('Property');
+  if (lower.includes('criminal') || lower.includes('bail') || lower.includes('cyber')) cats.push('Criminal');
+  if (lower.includes('family') || lower.includes('divorce') || lower.includes('matrimonial')) cats.push('Family');
+  if (lower.includes('labour') || lower.includes('employment')) cats.push('Labour');
+  if (lower.includes('consumer')) cats.push('Consumer');
+  if (lower.includes('women') || lower.includes('domestic violence') || lower.includes('pocso')) cats.push('Women');
+  if (lower.includes('startup') || lower.includes('corporate') || lower.includes('ip') || lower.includes('patent')) cats.push('Startup');
+  if (lower.includes('rti')) cats.push('RTI');
+  
+  // fallback if none matched
+  if (cats.length === 0) cats.push('Criminal');
+  return Array.from(new Set(cats));
+}
+
+export const LAWYERS = bangaloreLawyersData.map(l => ({
+  ...l,
+  categories: getCategories(l.practice_area),
+  citySlug: "bangalore",
+}));
