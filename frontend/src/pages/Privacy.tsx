@@ -3,8 +3,10 @@ import { StickyHeader } from "@/components/layout/StickyHeader";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <section className="ls-card p-4">
-    <h2 className="font-display font-semibold text-sm mb-2">{title}</h2>
+  <section className="ls-card p-5 hover:shadow-md transition-all duration-300 border-l-4 border-l-primary/40">
+    <h2 className="font-display font-semibold text-sm mb-2 text-primary flex items-center gap-2">
+      {title}
+    </h2>
     <div className="text-xs text-foreground/80 leading-relaxed space-y-2">{children}</div>
   </section>
 );
@@ -14,7 +16,7 @@ const Privacy = () => {
   return (
     <ScreenShell>
       <StickyHeader title={t("privacyTitle")} showBack showLanguagePill />
-      <div className="px-6 pt-4 pb-10 space-y-4">
+      <div className="px-6 pt-4 pb-10 space-y-4 animate-fade-in-up">
         <p className="text-[11px] text-muted-foreground">Last updated: April 2026</p>
 
         <Section title="1. Information we collect">
