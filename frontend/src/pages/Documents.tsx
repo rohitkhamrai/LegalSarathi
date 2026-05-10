@@ -20,7 +20,7 @@ const Documents = () => {
       <div className="px-6 pt-4 pb-6">
         <button
           onClick={() => navigate("/portal-tracker")}
-          className="w-full text-left ls-card p-4 mb-4 bg-gradient-to-br from-primary/10 to-accent/10 border-primary/20 tap"
+          className="w-full text-left ls-card p-4 mb-4 bg-gradient-to-br from-primary/10 to-accent/10 border-primary/20 tap hover-lift"
         >
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center shrink-0">
@@ -56,7 +56,7 @@ const Documents = () => {
             <div
               key={d.id}
               className={cn(
-                "ls-card p-4",
+                "ls-card p-4 hover-lift animate-fade-in-up",
                 d.featured && "border-accent/40 bg-accent/5"
               )}
             >
