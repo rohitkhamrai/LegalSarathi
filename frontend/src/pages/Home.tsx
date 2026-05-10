@@ -148,9 +148,10 @@ const Home = () => {
 };
 
 const ActionTile = ({ bg, text, icon, label, onClick }: { bg: string; text: string; icon: React.ReactNode; label: string; onClick?: () => void }) => (
-  <button onClick={onClick} className={`tap text-left rounded-2xl ${bg} ${text} p-4 h-28 flex flex-col justify-between shadow-card hover:scale-[1.02] active:scale-[0.98] transition-all duration-200`}>
-    <span className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">{icon}</span>
-    <span className="text-sm font-display font-semibold leading-tight">{label}</span>
+  <button onClick={onClick} className={`tap group relative overflow-hidden text-left rounded-2xl ${bg} ${text} p-4 h-28 flex flex-col justify-between shadow-card hover:shadow-md transition-all duration-300`}>
+    <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+    <span className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform duration-300">{icon}</span>
+    <span className="text-sm font-display font-semibold leading-tight group-hover:translate-x-0.5 transition-transform duration-300">{label}</span>
   </button>
 );
 
