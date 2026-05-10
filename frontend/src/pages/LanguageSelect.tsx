@@ -42,7 +42,7 @@ const LanguageSelect = () => {
                 onClick={() => setSelected(l.code)}
                 aria-pressed={active}
                 className={cn(
-                  "relative h-[88px] rounded-2xl border-2 flex items-center justify-center font-native text-xl font-semibold tap transition-colors",
+                  "relative h-[88px] rounded-2xl border-2 flex items-center justify-center font-native text-xl font-semibold tap transition-all duration-300 shadow-sm hover:shadow-md",
                   active
                     ? "bg-primary/5 text-primary border-primary"
                     : "bg-card text-foreground border-border hover:border-primary/40"
@@ -50,7 +50,7 @@ const LanguageSelect = () => {
               >
                 {l.native}
                 {active && (
-                  <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+                  <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary flex items-center justify-center animate-scale-in shadow-sm">
                     <Check size={14} className="text-primary-foreground" strokeWidth={3} />
                   </span>
                 )}
