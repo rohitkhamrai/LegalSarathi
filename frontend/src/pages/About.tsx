@@ -8,8 +8,8 @@ const About = () => {
   return (
     <ScreenShell>
       <StickyHeader title={t("aboutTitle")} showBack showLanguagePill />
-      <div className="px-6 pt-4 pb-10 space-y-5">
-        <section className="ls-card p-5">
+      <div className="px-6 pt-4 pb-10 space-y-5 animate-fade-in-up">
+        <section className="ls-card p-5 hover-lift">
           <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-3">
             <Scale size={22} />
           </div>
