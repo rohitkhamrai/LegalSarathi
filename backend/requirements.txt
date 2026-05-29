@@ -16,8 +16,8 @@ beautifulsoup4==4.12.3
 SpeechRecognition==3.14.0
 edge-tts==6.1.15
 fpdf2==2.8.7
-pytest==9.0.3
-pytest-asyncio==0.24.0
+pytest==8.3.3
+pytest-asyncio==0.24.2
 rank-bm25==0.2.2
 sentence-transformers==3.3.1
 paddlepaddle==2.6.2
@@ -33,3 +33,8 @@ python-multipart==0.0.20
 # ── Supabase integration ──────────────────────────────────────────────────────
 supabase==2.9.1
 python-jose[cryptography]==3.3.0
+# ── Observability ─────────────────────────────────────────────────────────────
+langfuse==2.36.1
+# ── Evaluation ────────────────────────────────────────────────────────────────
+ragas==0.1.21
+datasets==2.21.0
