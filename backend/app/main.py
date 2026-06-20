@@ -1,20 +1,10 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 import urllib.parse
 import json
 from pathlib import Path
 
-_p1 = Path(__file__).resolve().parents[2] / ".env"
-_p2 = Path(__file__).resolve().parents[1] / ".env"
-_p3 = Path.cwd() / ".env"
-if _p1.exists():
-    load_dotenv(dotenv_path=str(_p1), override=True)
-elif _p2.exists():
-    load_dotenv(dotenv_path=str(_p2), override=True)
-elif _p3.exists():
-    load_dotenv(dotenv_path=str(_p3), override=True)
-else:
-    load_dotenv(override=True)
+load_dotenv(find_dotenv(), override=True)
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
@@ -163,16 +153,23 @@ async def process_legal_query(req: QueryRequest, request: Request):
 
     if user and user.get("user_id"):
         uid = user["user_id"]
-        # Fetch document chunks relevant to the query
-        doc_context = _doc_memory_svc.retrieve(
-            query=req.query,
-            user_id=uid,
-            session_id=req.session_id if req.session_id else None,
-            top_k=4
-        )
-        # Fetch existing long-term session summary
+        try:
+            doc_context = _doc_memory_svc.retrieve(
+                query=req.query,
+                user_id=uid,
+                session_id=req.session_id or None,
+                top_k=4
+            )
+        except Exception as e:
+            print(f"[MEMORY] retrieve error: {e}")
+            doc_context = ""
+
         if req.session_id:
-            session_summary = _summarization_svc.get_summary(req.session_id)
+            try:
+                session_summary = _summarization_svc.get_summary(req.session_id)
+            except Exception as e:
+                print(f"[MEMORY] summary error: {e}")
+                session_summary = ""
 
     result = await orchestrator.process_query(
         text=req.query,

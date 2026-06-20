@@ -69,55 +69,35 @@ def _cache_set(key: str, value: dict):
 
 
 # ── Langfuse helpers ───────────────────────────────────────────────────────────
+from functools import wraps
 
-def _lf_span(trace_or_span, name: str, **kwargs):
-    """
-    Safe wrapper: create a Langfuse span. Returns the span object or None.
-    Never raises.
-    """
-    try:
-        if trace_or_span is None:
+def safe_langfuse(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            print(f"[LANGFUSE] {func.__name__} error (non-fatal): {exc}")
             return None
-        return trace_or_span.span(name=name, **kwargs)
-    except Exception as exc:
-        print(f"[LANGFUSE] span({name}) error (non-fatal): {exc}")
-        return None
+    return wrapper
 
+@safe_langfuse
+def _lf_span(trace_or_span, name: str, **kwargs):
+    if trace_or_span is None: return None
+    return trace_or_span.span(name=name, **kwargs)
 
+@safe_langfuse
 def _lf_end(span, **kwargs):
-    """Safe wrapper: end a Langfuse span. Never raises."""
-    try:
-        if span is not None:
-            span.end(**kwargs)
-    except Exception as exc:
-        print(f"[LANGFUSE] span.end error (non-fatal): {exc}")
+    if span is not None: span.end(**kwargs)
 
+@safe_langfuse
+def _lf_generation(span, name: str, model: str, input_text: str, output, usage: dict):
+    if span is not None:
+        span.generation(name=name, model=model, input=input_text, output=output, usage=usage)
 
-def _lf_generation(span, name: str, model: str, input_text: str,
-                   output, usage: dict):
-    """Safe wrapper: create a Langfuse generation event inside a span. Never raises."""
-    try:
-        if span is None:
-            return
-        span.generation(
-            name=name,
-            model=model,
-            input=input_text,
-            output=output,
-            usage=usage,
-        )
-    except Exception as exc:
-        print(f"[LANGFUSE] generation({name}) error (non-fatal): {exc}")
-
-
+@safe_langfuse
 def _lf_score(trace, name: str, value: float):
-    """Safe wrapper: add a score to a Langfuse trace. Never raises."""
-    try:
-        if trace is None:
-            return
-        trace.score(name=name, value=value)
-    except Exception as exc:
-        print(f"[LANGFUSE] score({name}) error (non-fatal): {exc}")
+    if trace is not None: trace.score(name=name, value=value)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
